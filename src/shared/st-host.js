@@ -20,6 +20,7 @@ export {
   onWorldInfoChange,
   originalWIDataKeyMap,
   saveWorldInfo,
+  splitKeywordsAndRegexes,
   setWIOriginalDataValue,
   METADATA_KEY,
   selected_world_info,

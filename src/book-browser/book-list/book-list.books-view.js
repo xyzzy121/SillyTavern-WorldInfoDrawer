@@ -1,9 +1,8 @@
 import { cloneMetadata } from '../../shared/sort-helpers.js';
-import { maybeYieldToEventLoop, yieldToUi } from '../../shared/utils.js';
+import { createWorkBudget } from '../../shared/utils.js';
+import { createBookLoader } from './book-list.loading.js';
 
-// Yield to the browser every N entries while building a book's rows so a large
-// single book (≥1,000 entries) cannot freeze the tab. Mirrors table.body.js's
-// ROW_BUILD_BATCH_SIZE precedent.
+// The shared time budget can yield earlier than this row-count cap.
 const ENTRY_RENDER_BATCH_SIZE = 50;
 const BOOK_COLLAPSE_TOOLTIP = 'Collapse/expand this book';
 const UNSAVED_ENTRY_RETRY_MESSAGE =
@@ -26,6 +25,10 @@ const createBooksViewSlice = ({
   updateCollapseAllToggle,
   persistFolderCollapseStates,
 }) => {
+  const bookLoader = createBookLoader((name) => runtime.loadWorldInfo(name));
+  const pendingReplacementRoots = new WeakMap();
+  let renderGeneration = 0;
+  let disposed = false;
   const isFolderGroupingEnabled = () => Boolean(runtime?.Settings?.instance?.featureFolderGrouping);
   const compareCaseInsensitiveNames = (leftName, rightName) =>
     leftName.toLowerCase().localeCompare(rightName.toLowerCase());
@@ -72,7 +75,10 @@ const createBooksViewSlice = ({
     // abort part-way (see its cache-identity guard) and must not leave the book
     // with no row at all. The caller drops it at insert time instead, so the
     // old row only ever goes away once a new one is ready to take its place.
-    const previousRoot = runtime.cache[bookName]?.dom?.root ?? null;
+    const previousWorld = runtime.cache[bookName];
+    const previousRoot =
+      pendingReplacementRoots.get(previousWorld) ?? previousWorld?.dom?.root ?? null;
+    if (previousRoot) pendingReplacementRoots.set(world, previousRoot);
     runtime.cache[bookName] = world;
     setCacheMetadata(bookName, data.metadata);
 
@@ -265,31 +271,14 @@ const createBooksViewSlice = ({
     targetParent.append(bookElement);
   };
 
-  const loadValidBooksWithYield = async (sortedNames) => {
-    const books = [];
-    for (let i = 0; i < sortedNames.length; i++) {
-      const name = sortedNames[i];
-      const data = await runtime.loadWorldInfo(name);
-      if (!data || typeof data !== 'object') {
-        console.warn(`[STWID] loadList: skipping book with invalid payload — "${name}"`);
-      } else {
-        books.push({ name, data });
-      }
-      if (i > 0 && i % 5 === 0) {
-        await yieldToUi();
-      }
-    }
-    return books;
-  };
-
   const groupBooksByFolder = (books) => {
     const folderGroups = new Map();
     const rootBooks = [];
     for (const book of books) {
       const folderName = getFolderFromMetadata(book.data?.metadata);
       if (isFolderGroupingEnabled() && folderName) {
-        registerFolderName(folderName);
         if (!folderGroups.has(folderName)) {
+          registerFolderName(folderName);
           folderGroups.set(folderName, []);
         }
         folderGroups.get(folderName).push(book);
@@ -311,28 +300,41 @@ const createBooksViewSlice = ({
     };
   };
 
-  const renderBookBatch = async (booksToRender, getParentElement) => {
+  const renderBookBatch = async (booksToRender, getParentElement, isCurrent, checkpoint) => {
     for (let i = 0; i < booksToRender.length; i++) {
+      if (!isCurrent()) return;
       const book = booksToRender[i];
-      await renderBook(book.name, null, book.data, getParentElement());
-      if (i > 0 && i % 2 === 0) {
-        await yieldToUi();
-      }
+      await renderBook(book.name, null, book.data, getParentElement(), {
+        isCurrent,
+        updateToggle: false,
+      });
+      const pause = checkpoint();
+      if (pause) await pause;
     }
   };
 
-  const renderGroupedBooks = async (sortedFolders, folderGroups, rootBooks) => {
+  const renderGroupedBooks = async (sortedFolders, folderGroups, rootBooks, isCurrent) => {
+    const checkpoint = createWorkBudget();
     for (const folderName of sortedFolders) {
-      const folderDom = foldersViewSlice.ensureFolderDom(folderName);
+      if (!isCurrent()) return;
+      const folderDom = foldersViewSlice.ensureFolderDom(folderName, runtime.dom.books, {
+        updateToggle: false,
+      });
       const folderBooks = folderGroups.get(folderName) ?? [];
-      await renderBookBatch(folderBooks, () => folderDom.books);
-      await yieldToUi();
+      await renderBookBatch(folderBooks, () => folderDom.books, isCurrent, checkpoint);
+      const pause = checkpoint();
+      if (pause) await pause;
     }
-    await renderBookBatch(rootBooks, () => runtime.dom.books);
+    await renderBookBatch(rootBooks, () => runtime.dom.books, isCurrent, checkpoint);
   };
 
-  const renderBook = async (name, before = null, bookData = null, parent = null) => {
-    const data = bookData ?? (await runtime.loadWorldInfo(name));
+  const renderBook = async (name, before = null, bookData = null, parent = null, options = {}) => {
+    const generation = renderGeneration;
+    const isCurrent = () =>
+      !disposed && generation === renderGeneration && (options.isCurrent?.() ?? true);
+    if (!isCurrent()) return null;
+    const data = bookData ?? (await bookLoader.load(name));
+    if (!isCurrent()) return null;
     const cachedBookState = createCachedBookState(name, data, parent);
     if (!cachedBookState) {
       return null;
@@ -363,20 +365,21 @@ const createBooksViewSlice = ({
 
     const { sort, direction } = getBookSortChoice(name);
     const sortedEntries = runtime.sortEntries(Object.values(world.entries), sort, direction);
+    const checkpoint = createWorkBudget({ maxItems: ENTRY_RENDER_BATCH_SIZE });
     for (let i = 0; i < sortedEntries.length; i++) {
       await runtime.renderEntry(sortedEntries[i], name);
-      await maybeYieldToEventLoop(i, ENTRY_RENDER_BATCH_SIZE);
+      const pause = checkpoint();
+      if (pause) await pause;
       // A WORLDINFO_UPDATED event can land while we were yielded and replace or
       // remove this book's cache entry. Our detached `world`/`book` is now stale,
       // so abort the render and let the fresh pass rebuild it.
-      if (runtime.cache[name] !== world) {
+      if (!isCurrent() || runtime.cache[name] !== world) {
         return null;
       }
     }
     const initialCollapsed =
       listPanelState.getCollapseState(name) ??
       entryList.classList.contains('stwid--state-collapsed');
-    setBookCollapsed(name, initialCollapsed);
     book.append(entryList);
 
     // Swap, don't append: this render superseded whatever row the last one left
@@ -385,17 +388,26 @@ const createBooksViewSlice = ({
     // than leaving the book with none.
     previousRoot?.remove();
     insertBookInAlphabeticalOrder(name, book, targetParent, before);
+    pendingReplacementRoots.delete(world);
+    // Applying after attachment also restores expanded state: the shared
+    // setter deliberately ignores detached DOM left by superseded renders.
+    setBookCollapsed(name, initialCollapsed, { updateToggle: options.updateToggle !== false });
 
     return book;
   };
 
-  const loadList = async () => {
+  const loadList = async (options = {}) => {
+    const generation = ++renderGeneration;
+    const isCurrent = () =>
+      !disposed && generation === renderGeneration && (options.isCurrent?.() ?? true);
+    if (!isCurrent()) return false;
     runtime.dom.books.innerHTML = '';
     foldersViewSlice.resetFolderDoms();
 
     const worldNames = runtime.getWorldNames ? runtime.getWorldNames() : runtime.world_names;
     const sortedNames = runtime.safeToSorted(worldNames ?? [], compareCaseInsensitiveNames);
-    const books = await loadValidBooksWithYield(sortedNames);
+    const books = await bookLoader.loadMany(sortedNames, isCurrent);
+    if (!books || !isCurrent()) return false;
     const { folderGroups, rootBooks, sortedFolders } = groupBooksByFolder(books);
 
     // Prune collapse state for books/folders that no longer exist so these maps
@@ -409,15 +421,23 @@ const createBooksViewSlice = ({
       persistFolderCollapseStates();
     }
 
-    await renderGroupedBooks(sortedFolders, folderGroups, rootBooks);
+    await renderGroupedBooks(sortedFolders, folderGroups, rootBooks, isCurrent);
+    if (!isCurrent()) return false;
     runtime.applyActiveFilter?.();
     updateCollapseAllToggle();
     foldersViewSlice.updateCollapseAllFoldersToggle();
+    return true;
   };
 
   return {
     loadList,
     renderBook,
+    invalidate: () => { renderGeneration += 1; },
+    cleanup: () => {
+      disposed = true;
+      renderGeneration += 1;
+      bookLoader.dispose();
+    },
   };
 };
 

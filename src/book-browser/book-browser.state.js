@@ -49,6 +49,8 @@ const bookBrowserStateStore = {
   loadListDebounced: null,
   folderImportInput: null,
   entrySearchCache: createSafeStateMap(),
+  entrySearchCacheEntryCount: 0,
+  entrySearchCacheBookCounts: createSafeStateMap(),
   collapseStates: createSafeStateMap(),
   folderCollapseStates: createSafeStateMap(),
   folderDoms: createSafeStateMap(),
@@ -76,6 +78,9 @@ export const listPanelState = {
   },
   get entrySearchCache() {
     return bookBrowserStateStore.entrySearchCache;
+  },
+  get entrySearchCacheEntryCount() {
+    return bookBrowserStateStore.entrySearchCacheEntryCount;
   },
   get collapseStates() {
     return bookBrowserStateStore.collapseStates;
@@ -137,19 +142,45 @@ export const listPanelState = {
   setEntrySearchCacheValue(bookName, uid, value) {
     const bookKey = normalizeStateKey(bookName);
     const entryKey = normalizeEntryCacheKey(uid);
-    if (!bookKey || !entryKey) return;
-    bookBrowserStateStore.entrySearchCache[bookKey] ??= createSafeStateMap();
-    bookBrowserStateStore.entrySearchCache[bookKey][entryKey] = value;
-    if (getEntrySearchCacheEntryCount() > MAX_ENTRY_CACHE_SIZE) {
-      clearEntrySearchCache();
+    if (!bookKey || !entryKey) return false;
+    let bookCache = bookBrowserStateStore.entrySearchCache[bookKey];
+    if (!bookCache || !Object.hasOwn(bookCache, entryKey)) {
+      // Keep useful cached entries when a library exceeds the capacity. Counting
+      // on admission avoids repeatedly walking every cached UID during search.
+      if (bookBrowserStateStore.entrySearchCacheEntryCount >= MAX_ENTRY_CACHE_SIZE) return false;
+      bookCache ??= bookBrowserStateStore.entrySearchCache[bookKey] = createSafeStateMap();
+      bookBrowserStateStore.entrySearchCacheEntryCount += 1;
+      bookBrowserStateStore.entrySearchCacheBookCounts[bookKey] =
+        (bookBrowserStateStore.entrySearchCacheBookCounts[bookKey] ?? 0) + 1;
     }
+    bookCache[entryKey] = value;
+    return true;
   },
   pruneEntrySearchCacheStaleBooks(activeBookNames) {
+    if (!Array.isArray(activeBookNames)) return;
     const activeSet = new Set(activeBookNames);
     for (const bookKey of Object.keys(bookBrowserStateStore.entrySearchCache)) {
       if (!activeSet.has(bookKey)) {
+        bookBrowserStateStore.entrySearchCacheEntryCount -=
+          bookBrowserStateStore.entrySearchCacheBookCounts[bookKey] ?? 0;
         delete bookBrowserStateStore.entrySearchCache[bookKey];
+        delete bookBrowserStateStore.entrySearchCacheBookCounts[bookKey];
       }
+    }
+  },
+  pruneEntrySearchCacheStaleEntries(bookName, activeEntryUids) {
+    const bookKey = normalizeStateKey(bookName);
+    const bookCache = bookKey && bookBrowserStateStore.entrySearchCache[bookKey];
+    if (!bookCache || !(activeEntryUids instanceof Set)) return;
+    for (const uid of Object.keys(bookCache)) {
+      if (activeEntryUids.has(uid)) continue;
+      delete bookCache[uid];
+      bookBrowserStateStore.entrySearchCacheEntryCount -= 1;
+      bookBrowserStateStore.entrySearchCacheBookCounts[bookKey] -= 1;
+    }
+    if (!bookBrowserStateStore.entrySearchCacheBookCounts[bookKey]) {
+      delete bookBrowserStateStore.entrySearchCache[bookKey];
+      delete bookBrowserStateStore.entrySearchCacheBookCounts[bookKey];
     }
   },
   pruneCollapseStatesStaleBooks(activeBookNames) {
@@ -181,14 +212,6 @@ const clearObjectKeys = (target) => {
   for (const key of Object.keys(target)) {
     delete target[key];
   }
-};
-
-const getEntrySearchCacheEntryCount = () => {
-  let total = 0;
-  for (const bookCache of Object.values(bookBrowserStateStore.entrySearchCache)) {
-    total += Object.keys(bookCache ?? {}).length;
-  }
-  return total;
 };
 
 const loadFolderCollapseStates = () => {
@@ -266,6 +289,8 @@ export const resetBookVisibilityState = (bookVisibilityModes) => {
 
 export const clearEntrySearchCache = () => {
   clearObjectKeys(listPanelState.entrySearchCache);
+  clearObjectKeys(bookBrowserStateStore.entrySearchCacheBookCounts);
+  bookBrowserStateStore.entrySearchCacheEntryCount = 0;
 };
 
 export const hydrateFolderCollapseStates = () => {

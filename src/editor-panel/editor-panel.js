@@ -1,4 +1,5 @@
 import { applyMobileHeaderLayout, MOBILE_EDITOR_MEDIA_QUERY } from './editor-panel-mobile.js';
+import { splitKeywordsAndRegexes } from '../shared/st-host.js';
 
 const ACTIVE_STATE_CLASS = 'stwid--state-active';
 const FOCUS_CLASS = 'stwid--focus';
@@ -8,6 +9,83 @@ const AMS_WIRED_DATASET_VALUE = '1';
 const EDITOR_EVENT_INPUT = 'input';
 const EDITOR_EVENT_CHANGE = 'change';
 const EDITOR_EVENT_KEYDOWN = 'keydown';
+const EDITOR_CONTROL_SELECTOR = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
+
+const sameEntryValue = (left, right) => {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  if (Array.isArray(left) && left.length !== right.length) return false;
+  const leftKeys = Object.keys(left).filter((key) => left[key] !== undefined);
+  const rightKeys = Object.keys(right).filter((key) => right[key] !== undefined);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Object.hasOwn(right, key) && sameEntryValue(left[key], right[key]));
+};
+
+const controlSnapshot = (control) => {
+  if (control.type === 'checkbox' || control.type === 'radio') return Boolean(control.checked);
+  if (control.multiple) return JSON.stringify(Array.from(control.selectedOptions ?? [], (option) => option.value));
+  return String(control.value ?? control.textContent ?? '');
+};
+
+// The host mutates its editor model at different times: content on input, keys
+// after an asynchronous change handler. Compare the control's own field rather
+// than inferring a commit from an unrelated change elsewhere in that model.
+const controlMatchesEntry = (control, entry) => {
+  const name = control.name;
+  const value = String(control.value ?? '');
+  const options = Array.from(control.selectedOptions ?? []);
+  if (name === 'key' || name === 'keysecondary') {
+    const keys = control.tagName === 'SELECT'
+      ? options.map((option) => option.text ?? option.textContent ?? '')
+      : splitKeywordsAndRegexes(value);
+    return sameEntryValue(keys, entry[name] ?? []);
+  }
+  if (name === 'entryStateSelector') {
+    const state = entry.constant ? 'constant' : entry.vectorized ? 'vectorized' : 'normal';
+    return value === state;
+  }
+  if (name === 'entryLogicType') return Number(value) === entry.selectiveLogic;
+  if (name === 'character_exclusion') return control.checked === Boolean(entry.characterFilter?.isExclude);
+  if (name === 'characterFilter') {
+    const names = options.filter((option) => option.dataset?.type === 'character')
+      .map((option) => option.innerText ?? option.text ?? option.textContent ?? '');
+    const tags = options.filter((option) => option.dataset?.type === 'tag').map((option) => option.value);
+    return sameEntryValue(names, entry.characterFilter?.names ?? [])
+      && sameEntryValue(tags, entry.characterFilter?.tags ?? []);
+  }
+  if (name === 'delay_until_recursion') return control.checked === Boolean(entry.delayUntilRecursion);
+  if (name === 'delayUntilRecursionLevel') {
+    if (!value) return typeof entry.delayUntilRecursion === 'boolean';
+    const level = Number(value);
+    return (Number.isNaN(level) ? false : level) === entry.delayUntilRecursion;
+  }
+  if (name === 'position') {
+    const role = options[0]?.dataset?.role;
+    return Number(value) === entry.position
+      && (!role || Number(role) === entry.role);
+  }
+  if (name === 'scanDepth') {
+    const depth = value === '' ? null : Math.floor(Number(value));
+    return depth === entry.scanDepth;
+  }
+  if (name === 'group') return value.trim() === (entry.group ?? '');
+  if (name && Object.hasOwn(entry, name)) {
+    if (control.type === 'checkbox') return control.checked === Boolean(entry[name]);
+    if (control.multiple) return sameEntryValue(options.map((option) => option.value), entry[name] ?? []);
+    if (control.type === 'number' || typeof entry[name] === 'number') {
+      const numeric = Number(value);
+      return (Number.isNaN(numeric) ? null : numeric) === entry[name];
+    }
+    if (control.tagName === 'SELECT' && (typeof entry[name] === 'boolean' || entry[name] === null)) {
+      return (value === 'null' ? null : value === 'true') === entry[name];
+    }
+    return value === String(entry[name] ?? '');
+  }
+  // Select2's search box holds an uncommitted tag/keyword until it is accepted.
+  if (control.classList?.contains('select2-search__field')) return value.length === 0;
+  return false;
+};
 
 const NON_EDITING_KEYS = new Set([
   'Shift',
@@ -47,7 +125,7 @@ const wireEditorDirtyTracking = ({ dom, markEditorDirtyIfCurrent, shouldMarkDirt
   const onEditorChange = markEditorDirtyIfCurrent;
   const onEditorKeydown = (evt) => {
     if (shouldMarkDirtyOnKeydown(evt)) {
-      markEditorDirtyIfCurrent();
+      markEditorDirtyIfCurrent(evt);
     }
   };
 
@@ -195,7 +273,7 @@ const buildEntryEditDom = async ({
     $(drawerToggle).trigger('inline-drawer-toggle');
   }
   if (!isTokenCurrent()) return null;
-  return entryEditorDom;
+  return { entryEditorDom, payloadEntry };
 };
 
 const renderEntryEditorDom = ({
@@ -248,16 +326,58 @@ const fixTextpoleHeights = (entryEditorDom) => {
 const createDirtyTracker = ({ dom }) => {
   let isEditorDirty = false;
   let currentEditorKey = null;
+  let mountedEditor = null;
+  let editorEntry = null;
+  let hasUnknownDirtyControl = false;
+  let cleanEntrySnapshot = null;
+  const cleanControlSnapshots = new Map();
+  const dirtyControls = new Set();
+
+  const resetControlSnapshots = () => {
+    cleanEntrySnapshot = JSON.stringify(editorEntry);
+    cleanControlSnapshots.clear();
+    for (const control of mountedEditor?.querySelectorAll(EDITOR_CONTROL_SELECTOR) ?? []) {
+      cleanControlSnapshots.set(control, controlSnapshot(control));
+    }
+    dirtyControls.clear();
+    hasUnknownDirtyControl = false;
+  };
+
+  const setMountedEditor = (element, entry) => {
+    mountedEditor = element;
+    editorEntry = entry;
+    resetControlSnapshots();
+  };
 
   const markEditorClean = (name, uid) => {
     if (!hasValidEditorKey(name, uid)) return;
     currentEditorKey = { name, uid };
     isEditorDirty = false;
+    resetControlSnapshots();
   };
 
-  const markEditorDirtyIfCurrent = () => {
+  const markEditorDirtyIfCurrent = (event) => {
     if (!currentEditorKey) return;
     isEditorDirty = true;
+    const control = event?.target?.closest?.(EDITOR_CONTROL_SELECTOR);
+    if (control) dirtyControls.add(control);
+    else hasUnknownDirtyControl = true;
+  };
+
+  const markSavedIfMatching = (savedEntry) => {
+    if (!editorEntry || !savedEntry || hasUnknownDirtyControl || !sameEntryValue(editorEntry, savedEntry)) return false;
+    for (const control of dirtyControls) {
+      if (!mountedEditor?.contains(control)) continue;
+      // A reverted control is safe only if the model also stayed at its clean
+      // baseline. Otherwise a newer saved model may differ from that UI draft.
+      if (cleanControlSnapshots.has(control)
+        && controlSnapshot(control) === cleanControlSnapshots.get(control)
+        && JSON.stringify(editorEntry) === cleanEntrySnapshot) continue;
+      if (!controlMatchesEntry(control, editorEntry)) return false;
+    }
+    isEditorDirty = false;
+    resetControlSnapshots();
+    return true;
   };
 
   const shouldMarkDirtyOnKeydown = (evt) => {
@@ -281,11 +401,15 @@ const createDirtyTracker = ({ dom }) => {
   return {
     cleanup,
     markEditorClean,
+    markSavedIfMatching,
+    setMountedEditor,
     setCurrentEditorKey: (v) => {
       currentEditorKey = v;
+      if (!v) setMountedEditor(null, null);
     },
     setIsEditorDirty: (v) => {
       isEditorDirty = v;
+      if (!v) resetControlSnapshots();
     },
     getIsEditorDirty: () => isEditorDirty,
     getCurrentEditorKey: () => currentEditorKey,
@@ -332,6 +456,8 @@ export const initEditorPanel = ({
   const {
     cleanup,
     markEditorClean,
+    markSavedIfMatching,
+    setMountedEditor,
     setCurrentEditorKey,
     setIsEditorDirty,
     getIsEditorDirty,
@@ -443,14 +569,15 @@ export const initEditorPanel = ({
     closeCompetingPanels();
     const header = await fetchEntryHeaderElement(renderTemplateAsync, isTokenCurrent);
     if (!isTokenCurrent()) return;
-    const entryEditorDom = await buildEntryEditDom({
+    const editor = await buildEntryEditDom({
       buildSavePayload,
       getWorldEntry,
       isTokenCurrent,
       name,
       entry,
     });
-    if (!entryEditorDom) return;
+    if (!editor) return;
+    const { entryEditorDom, payloadEntry } = editor;
     applyMobileHeaderLayout(entryEditorDom);
     appendFocusButton(entryEditorDom);
     setActiveEntryDom(
@@ -467,6 +594,7 @@ export const initEditorPanel = ({
     wireAmsDrawerSection(entryEditorDom);
     fixTextpoleHeights(entryEditorDom);
     setCurrentEditor({ name, uid: entry.uid });
+    setMountedEditor(entryEditorDom, payloadEntry);
     markEditorClean(name, entry.uid);
 
     // Track the open editor so a later viewport breakpoint change can re-apply or
@@ -484,18 +612,24 @@ export const initEditorPanel = ({
     return Boolean(
       getIsEditorDirty() &&
       getCurrentEditorKey()?.name === name &&
-      getCurrentEditorKey()?.uid === uid,
+      String(getCurrentEditorKey()?.uid) === String(uid),
     );
   };
 
   const markClean = (name, uid) => {
     if (!hasValidEditorKey(name, uid)) return;
-    if (getCurrentEditorKey()?.name !== name || getCurrentEditorKey()?.uid !== uid) return;
+    if (getCurrentEditorKey()?.name !== name || String(getCurrentEditorKey()?.uid) !== String(uid)) return;
     setIsEditorDirty(false);
+  };
+
+  const markCleanIfSaved = (name, uid, savedEntry) => {
+    if (!isDirty(name, uid)) return false;
+    return markSavedIfMatching(savedEntry);
   };
 
   const cleanupEditorPanel = () => {
     cleanup();
+    setMountedEditor(null, null);
     editorLayoutMedia?.removeEventListener?.('change', handleEditorLayoutBreakpointChange);
   };
 
@@ -510,5 +644,6 @@ export const initEditorPanel = ({
     openEntryEditor,
     isDirty,
     markClean,
+    markCleanIfSaved,
   };
 };

@@ -70,6 +70,15 @@ const createFoldersViewSlice = ({ listPanelState, runtime, selectionDnDSlice }) 
   const insertFolderDomSorted = (folderDom, parent = runtime.dom.books) => {
     let insertBefore = null;
     const normalizedFolder = (folderDom?.root?.dataset?.folder ?? '').toLowerCase();
+    const lastChild = parent.lastElementChild;
+    if (
+      !lastChild ||
+      (lastChild.classList.contains('stwid--folder') &&
+        (lastChild.dataset.folder ?? '').toLowerCase().localeCompare(normalizedFolder) <= 0)
+    ) {
+      parent.append(folderDom.root);
+      return;
+    }
     for (const child of parent.children) {
       if (child.classList.contains('stwid--folder')) {
         const childName = child.dataset.folder?.toLowerCase() ?? '';
@@ -88,7 +97,7 @@ const createFoldersViewSlice = ({ listPanelState, runtime, selectionDnDSlice }) 
     else parent.append(folderDom.root);
   };
 
-  const ensureFolderDom = (folderName, parent = runtime.dom.books) => {
+  const ensureFolderDom = (folderName, parent = runtime.dom.books, { updateToggle = true } = {}) => {
     let folderDom = listPanelState.getFolderDom(folderName);
     if (!folderDom) {
       folderDom = createFolderDomForList(folderName);
@@ -100,7 +109,7 @@ const createFoldersViewSlice = ({ listPanelState, runtime, selectionDnDSlice }) 
       bulkFolderCollapsedIntent ?? listPanelState.getFolderCollapseState(folderName) ?? true;
     setFolderCollapsed(folderDom, initialCollapsed);
     folderDom.root.hidden = !folderGroupingVisible;
-    updateCollapseAllFoldersToggle();
+    if (updateToggle) updateCollapseAllFoldersToggle();
     return folderDom;
   };
 

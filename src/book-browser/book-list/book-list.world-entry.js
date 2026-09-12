@@ -57,18 +57,21 @@ function buildSelectionHelpToast() {
   return help;
 }
 
-function selectEntryRange(startRow, endRow, entryList) {
-  const start = [...entryList.children].indexOf(startRow);
-  const end = [...entryList.children].indexOf(endRow);
+export function selectEntryRange(startRow, endRow, entryList) {
+  const rows = Array.from(entryList.children);
+  const start = rows.indexOf(startRow);
+  const end = rows.indexOf(endRow);
   if (start < 0 || end < 0) return;
   const from = Math.min(start, end);
   const to = Math.max(start, end);
+  const selected = new Set(context.selectList);
   for (let i = from; i <= to; i++) {
-    const row = entryList.children[i];
+    const row = rows[i];
     const uid = String(row.dataset.uid);
-    if (!context.selectList.includes(uid)) {
+    if (!selected.has(uid)) {
       context.selectAdd(row);
       context.selectList.push(uid);
+      selected.add(uid);
     }
   }
 }

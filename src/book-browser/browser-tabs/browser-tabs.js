@@ -247,10 +247,13 @@ const createFilterBarSlice = ({
   });
   const documentClickSubscription = createDocumentClickSubscription();
   let applyTabHidden = null;
+  let searchControls = null;
   const setupFilter = (bookListContainer) => {
+    searchControls?.cleanup();
     const filter = document.createElement('div');
     {
-      const { searchRow } = createSearchRow(listPanelState, runtime, updateFolderActiveToggles);
+      searchControls = createSearchRow(listPanelState, runtime, updateFolderActiveToggles);
+      const { searchRow } = searchControls;
       const visibilityRow = document.createElement('div');
       visibilityRow.classList.add('stwid--browser-row');
       const sortingRow =
@@ -280,10 +283,14 @@ const createFilterBarSlice = ({
 
   return {
     cleanup: () => {
+      searchControls?.cleanup();
+      searchControls = null;
       documentClickSubscription.cleanup();
       applyTabHidden = null;
     },
     applyHiddenTabs,
+    refreshSearchFilter: () => searchControls?.refreshSearchFilter() ?? Promise.resolve(false),
+    invalidateSearchFilter: () => searchControls?.invalidateSearchFilter(),
     getBookVisibilityScope: (...args) => visibilitySlice.getBookVisibilityScope(...args),
     setEntryManagerToggleVisibility: (enabled) => {
       runtime?.dom?.setOrderToggleVisible?.(Boolean(enabled));

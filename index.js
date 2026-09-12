@@ -1,6 +1,6 @@
 import { initBookSourceLinks } from './src/book-browser/book-list/book-list.book-source-links.js';
 import { initDrawer } from './src/drawer.js';
-import { refreshList, waitForListRefreshIdle } from './src/book-browser/book-browser.js';
+import { refreshList, waitForListRefreshIdle, refreshSearchFilter, invalidateSearchFilter } from './src/book-browser/book-browser.js';
 import { entryState, renderEntry } from './src/book-browser/book-list/book-list.world-entry.js';
 import { initWIUpdateHandler, registerUiRefreshHooks } from './src/shared/wi-update-handler.js';
 import { Settings } from './src/shared/settings.js';
@@ -127,7 +127,7 @@ const bookSourceLinksApi = initBookSourceLinks({
 // Must run before initWIUpdateHandler() so the handler's UI hooks are never
 // called before they exist — no WORLDINFO_UPDATED event can reach it earlier,
 // since event listeners are only registered inside initWIUpdateHandler below.
-registerUiRefreshHooks({ refreshList, renderEntry, entryState, waitForListRefreshIdle });
+registerUiRefreshHooks({ refreshList, renderEntry, entryState, waitForListRefreshIdle, refreshSearchFilter, invalidateSearchFilter });
 
 const wiHandlerApi = initWIUpdateHandler({
   cache,

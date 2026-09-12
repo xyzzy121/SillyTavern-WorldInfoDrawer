@@ -242,6 +242,8 @@ export const buildEntryManagerFilterPanel = ({
   });
 
 export const buildEntryManagerTable = async ({
+  isRenderCurrent,
+  createEntryManagerRowFilter,
   entries,
   entryManagerState,
   dom,
@@ -346,6 +348,8 @@ export const buildEntryManagerTable = async ({
   filterIndicatorRefs.characterFilterValue = refreshCharacterFilterValueIndicator;
 
   const tbody = await buildTableBody({
+    isRenderCurrent,
+    createEntryManagerRowFilter,
     entries,
     dom,
     cache,
@@ -381,6 +385,8 @@ export const buildEntryManagerTable = async ({
     getSortableDelay,
     $,
   });
+
+  if (!isRenderCurrent()) return null;
 
   const orderTableEl = document.createElement('table');
   orderTableEl.classList.add('stwid--order-table');

@@ -1,3 +1,5 @@
+import { createWorkBudget } from '../../shared/utils.js';
+
 const FILTER_QUERY_CLASS = 'stwid--filter-query';
 const INPUT_EVENT = 'input';
 
@@ -21,9 +23,8 @@ const buildEntrySearchSignature = (entry) => {
 };
 
 const getEntrySearchText = (listPanelState, bookName, entry) => {
-  if (!entry?.uid) return '';
+  if (entry?.uid === null || entry?.uid === undefined) return '';
   const signature = buildEntrySearchSignature(entry);
-  listPanelState.ensureEntrySearchCacheBook(bookName);
   const cachedEntrySearch = listPanelState.getEntrySearchCacheValue(bookName, entry.uid);
   if (cachedEntrySearch?.signature === signature) return cachedEntrySearch.text;
   const text = signature.toLowerCase();
@@ -31,58 +32,115 @@ const getEntrySearchText = (listPanelState, bookName, entry) => {
   return text;
 };
 
-const applyBookBrowserSearchFilter = ({
+const applyBookBrowserSearchFilter = async ({
   runtime,
   listPanelState,
   query,
   shouldScanEntries,
-  applyQueryFiltered,
+  filteredRowRoots,
+  isCurrent,
   updateFolderActiveToggles,
 }) => {
-  const clearAllBookEntryFilters = (bookName) => {
-    for (const entry of Object.values(runtime.cache[bookName].entries)) {
-      applyQueryFiltered(runtime.cache[bookName].dom.entry[entry.uid]?.root, false);
-    }
-  };
-
-  const entryMatchesQuery = (bookName, entry, normalizedQuery) =>
-    getEntrySearchText(listPanelState, bookName, entry).includes(normalizedQuery);
-
-  const applyEntrySearchToBook = (bookName, normalizedQuery, bookMatch) => {
-    if (bookMatch) {
-      applyQueryFiltered(runtime.cache[bookName].dom.root, false);
-      clearAllBookEntryFilters(bookName);
-      return;
-    }
-
-    let anyEntryMatch = false;
-    for (const entry of Object.values(runtime.cache[bookName].entries)) {
-      const entryMatch = entryMatchesQuery(bookName, entry, normalizedQuery);
-      if (entryMatch) anyEntryMatch = true;
-      applyQueryFiltered(runtime.cache[bookName].dom.entry[entry.uid]?.root, !entryMatch);
-    }
-    applyQueryFiltered(runtime.cache[bookName].dom.root, !anyEntryMatch);
-  };
-
-  listPanelState.pruneEntrySearchCacheStaleBooks(Object.keys(runtime.cache));
-
-  for (const bookName of Object.keys(runtime.cache)) {
-    if (!query.length) {
-      applyQueryFiltered(runtime.cache[bookName].dom.root, false);
-      clearAllBookEntryFilters(bookName);
-      continue;
-    }
-
-    const bookMatch = bookName.toLowerCase().includes(query);
-    if (shouldScanEntries) {
-      applyEntrySearchToBook(bookName, query, bookMatch);
-      continue;
-    }
-
-    applyQueryFiltered(runtime.cache[bookName].dom.root, !bookMatch);
-    clearAllBookEntryFilters(bookName);
+  const checkpoint = createWorkBudget({ maxItems: 200, budgetMs: 8 });
+  const books = Object.entries(runtime.cache);
+  const activeBooks = new Set(books.map(([, book]) => book));
+  for (const book of filteredRowRoots.keys()) {
+    if (!activeBooks.has(book)) filteredRowRoots.delete(book);
   }
+  listPanelState.pruneEntrySearchCacheStaleBooks(books.map(([name]) => name));
+
+  for (const [bookName, book] of books) {
+    const entries = book.entries;
+    const dom = book.dom;
+    const entryDoms = dom?.entry;
+    const root = dom?.root;
+    const isBookCurrent = () => isCurrent()
+      && runtime.cache[bookName] === book
+      && book.entries === entries
+      && book.dom === dom
+      && dom?.entry === entryDoms
+      && dom?.root === root;
+    if (!isBookCurrent()) return false;
+    const bookMatch = !query.length || bookName.toLowerCase().includes(query);
+    let filteredRoots = filteredRowRoots.get(book);
+
+    if (shouldScanEntries && !bookMatch) {
+      if (!filteredRoots) {
+        filteredRoots = new Set();
+        filteredRowRoots.set(book, filteredRoots);
+      }
+      const activeEntryUids = new Set();
+      const currentFilteredRoots = new Set();
+      const entrySnapshot = Object.values(entries ?? {});
+      const entryMatches = new Array(entrySnapshot.length);
+      let anyEntryMatch = false;
+      for (let index = 0; index < entrySnapshot.length; index += 1) {
+        const entry = entrySnapshot[index];
+        const entryMatch = getEntrySearchText(listPanelState, bookName, entry).includes(query);
+        entryMatches[index] = entryMatch;
+        if (entry?.uid !== null && entry?.uid !== undefined) activeEntryUids.add(String(entry.uid));
+        if (entryMatch) anyEntryMatch = true;
+        const pending = checkpoint();
+        if (pending) {
+          await pending;
+          if (!isBookCurrent()) return false;
+        }
+      }
+      if (!isBookCurrent()) return false;
+      // Hide confirmed misses before updating their rows, avoiding repeated
+      // intermediate rendering at task boundaries. Matching books stay visible
+      // so evaluating a query cannot temporarily collapse their scroll space.
+      if (!anyEntryMatch) setQueryFiltered(root, true);
+      for (let index = 0; index < entrySnapshot.length; index += 1) {
+        const entry = entrySnapshot[index];
+        const entryMatch = entryMatches[index];
+        const entryRoot = entryDoms?.[entry?.uid]?.root;
+        setQueryFiltered(entryRoot, !entryMatch);
+        if (entryRoot) {
+          if (entryMatch) filteredRoots.delete(entryRoot);
+          else {
+            filteredRoots.add(entryRoot);
+            currentFilteredRoots.add(entryRoot);
+          }
+        }
+        const pending = checkpoint();
+        if (pending) {
+          await pending;
+          if (!isBookCurrent()) return false;
+        }
+      }
+      // Drop roots removed or replaced since the previous search. Keep the old
+      // set until completion so a cancelled scan can still restore every row.
+      if (currentFilteredRoots.size) filteredRowRoots.set(book, currentFilteredRoots);
+      else filteredRowRoots.delete(book);
+      listPanelState.pruneEntrySearchCacheStaleEntries(bookName, activeEntryUids);
+      setQueryFiltered(root, !anyEntryMatch);
+    } else {
+      // Name-only searches never need to inspect all entry data. Restore only
+      // roots hidden by an earlier entry query, including partially applied runs.
+      if (filteredRoots) {
+        for (const entryRoot of filteredRoots) {
+          setQueryFiltered(entryRoot, false);
+          filteredRoots.delete(entryRoot);
+          const pending = checkpoint();
+          if (pending) {
+            await pending;
+            if (!isBookCurrent()) return false;
+          }
+        }
+        filteredRowRoots.delete(book);
+      }
+      setQueryFiltered(root, !bookMatch);
+    }
+    const pending = checkpoint();
+    if (pending) {
+      await pending;
+      if (!isBookCurrent()) return false;
+    }
+  }
+  if (!isCurrent()) return false;
   updateFolderActiveToggles();
+  return true;
 };
 
 const buildSearchRow = (searchRow, listPanelState, runtime, updateFolderActiveToggles) => {
@@ -95,25 +153,50 @@ const buildSearchRow = (searchRow, listPanelState, runtime, updateFolderActiveTo
   search.setAttribute('aria-label', 'Search books');
   listPanelState.searchInput = search;
 
-  const applySearchFilter = () => {
+  let generation = 0;
+  let timer = null;
+  let disposed = false;
+  const filteredRowRoots = new Map();
+  const invalidateSearchFilter = () => {
+    generation += 1;
+    clearTimeout(timer);
+    timer = null;
+  };
+  const applySearchFilter = (runGeneration) => {
+    if (disposed || runGeneration !== generation) return Promise.resolve(false);
     const query = search.value.toLowerCase();
-    const searchEntries = listPanelState.searchEntriesInput.checked;
+    const searchEntries = searchEntriesCheckbox.checked;
     const shouldScanEntries = searchEntries && query.length >= 2;
-    applyBookBrowserSearchFilter({
+    return applyBookBrowserSearchFilter({
       runtime,
       listPanelState,
       query,
       shouldScanEntries,
-      applyQueryFiltered: setQueryFiltered,
+      filteredRowRoots,
+      isCurrent: () => !disposed && runGeneration === generation,
       updateFolderActiveToggles,
     });
   };
 
-  const applySearchFilterDebounced = runtime.debounce(() => applySearchFilter(), 125);
+  const refreshSearchFilter = () => {
+    invalidateSearchFilter();
+    return applySearchFilter(generation);
+  };
+  const queueSearchFilter = () => {
+    // Cancel a yielding search now, rather than letting it paint an old query
+    // during the debounce interval for the next input.
+    invalidateSearchFilter();
+    if (disposed) return;
+    const runGeneration = generation;
+    timer = setTimeout(() => {
+      timer = null;
+      applySearchFilter(runGeneration).catch((error) => {
+        console.warn('[STWID] Failed to apply book search', error);
+      });
+    }, 125);
+  };
 
-  search.addEventListener(INPUT_EVENT, () => {
-    applySearchFilterDebounced();
-  });
+  search.addEventListener(INPUT_EVENT, queueSearchFilter);
   searchRow.append(search);
 
   const searchEntriesLabel = document.createElement('label');
@@ -122,26 +205,32 @@ const buildSearchRow = (searchRow, listPanelState, runtime, updateFolderActiveTo
   const searchEntriesCheckbox = document.createElement('input');
   listPanelState.searchEntriesInput = searchEntriesCheckbox;
   searchEntriesCheckbox.type = 'checkbox';
-  searchEntriesCheckbox.addEventListener('click', () => {
-    search.dispatchEvent(new Event(INPUT_EVENT));
-  });
+  searchEntriesCheckbox.addEventListener('click', queueSearchFilter);
   searchEntriesLabel.append(searchEntriesCheckbox);
   searchEntriesLabel.append('Entries');
   searchRow.append(searchEntriesLabel);
 
-  return { search, searchEntriesCheckbox };
+  const cleanup = () => {
+    disposed = true;
+    invalidateSearchFilter();
+    filteredRowRoots.clear();
+    search.removeEventListener(INPUT_EVENT, queueSearchFilter);
+    searchEntriesCheckbox.removeEventListener('click', queueSearchFilter);
+  };
+
+  return { search, searchEntriesCheckbox, refreshSearchFilter, invalidateSearchFilter, cleanup };
 };
 
 export const createSearchRow = (listPanelState, runtime, updateFolderActiveToggles) => {
   const searchRow = document.createElement('div');
   searchRow.classList.add('stwid--browser-row');
-  const { search, searchEntriesCheckbox } = buildSearchRow(
+  const searchControls = buildSearchRow(
     searchRow,
     listPanelState,
     runtime,
     updateFolderActiveToggles,
   );
-  return { searchRow, search, searchEntriesCheckbox };
+  return { searchRow, ...searchControls };
 };
 
 export const mountSearchTabContent = ({ tabContentsById, searchRow }) => {

@@ -1,4 +1,4 @@
-import { maybeYieldToEventLoop } from '../../shared/utils.js';
+import { createWorkBudget } from '../../shared/utils.js';
 import { setupEntryManagerSorting } from './table.body.row-sorting.js';
 import { buildEntryManagerRow } from './table.body.cells.js';
 
@@ -53,6 +53,8 @@ function getEntryEditTemplates() {
 }
 
 export async function buildTableBody({
+  isRenderCurrent,
+  createEntryManagerRowFilter,
   entries,
   dom,
   cache,
@@ -70,13 +72,9 @@ export async function buildTableBody({
   applyEntryManagerStrategyFilterToRow,
   applyEntryManagerPositionFilterToRow,
   applyEntryManagerRecursionFilterToRow,
-  applyEntryManagerStrategyFilters,
-  applyEntryManagerRecursionFilters,
   applyEntryManagerOutletFilters,
   applyEntryManagerAutomationIdFilters,
   applyEntryManagerGroupFilters,
-  applyEntryManagerCharacterFilterPresenceFilters,
-  applyEntryManagerCharacterFilterValueFilters,
   syncEntryManagerOutletFilters,
   syncEntryManagerAutomationIdFilters,
   syncEntryManagerGroupFilters,
@@ -88,6 +86,7 @@ export async function buildTableBody({
   getSortableDelay,
   $,
 }) {
+  if (!isRenderCurrent()) return null;
   const tbody = document.createElement('tbody');
   dom.order.tbody = tbody;
 
@@ -106,53 +105,50 @@ export async function buildTableBody({
     getEntryManagerRows,
   });
 
+  const applyRowFilters = createEntryManagerRowFilter();
+  const checkpoint = createWorkBudget({ maxItems: ROW_BUILD_BATCH_SIZE });
   for (let i = 0; i < entries.length; i++) {
+    if (!isRenderCurrent()) return tbody;
     const entryRow = entries[i];
-    tbody.append(
-      buildEntryManagerRow({
-        entryRow,
-        dom,
-        cache,
-        enqueueSave,
-        focusWorldEntry,
-        isEntryManagerRowSelected,
-        setEntryManagerRowSelected,
-        updateEntryManagerSelectAllButton,
-        refreshSelectionCount,
-        applyEntryManagerStrategyFilterToRow,
-        applyEntryManagerPositionFilterToRow,
-        applyEntryManagerRecursionFilterToRow,
-        syncEntryManagerOutletFilters,
-        syncEntryManagerAutomationIdFilters,
-        syncEntryManagerGroupFilters,
-        refreshOutletFilterIndicator,
-        refreshAutomationIdFilterIndicator,
-        refreshGroupFilterIndicator,
-        applyEntryManagerOutletFilters,
-        applyEntryManagerAutomationIdFilters,
-        applyEntryManagerGroupFilters,
-        isOutletPosition,
-        entryState,
-        enabledToggleTemplate,
-        strategyTemplate,
-        positionTemplate,
-        getVisibleEntryManagerRows,
-        updateCustomOrderFromDom,
-      }),
-    );
-    await maybeYieldToEventLoop(i, ROW_BUILD_BATCH_SIZE);
+    const row = buildEntryManagerRow({
+      entryRow,
+      dom,
+      cache,
+      enqueueSave,
+      focusWorldEntry,
+      isEntryManagerRowSelected,
+      setEntryManagerRowSelected,
+      updateEntryManagerSelectAllButton,
+      refreshSelectionCount,
+      applyEntryManagerStrategyFilterToRow,
+      applyEntryManagerPositionFilterToRow,
+      applyEntryManagerRecursionFilterToRow,
+      syncEntryManagerOutletFilters,
+      syncEntryManagerAutomationIdFilters,
+      syncEntryManagerGroupFilters,
+      refreshOutletFilterIndicator,
+      refreshAutomationIdFilterIndicator,
+      refreshGroupFilterIndicator,
+      applyEntryManagerOutletFilters,
+      applyEntryManagerAutomationIdFilters,
+      applyEntryManagerGroupFilters,
+      isOutletPosition,
+      entryState,
+      enabledToggleTemplate,
+      strategyTemplate,
+      positionTemplate,
+      getVisibleEntryManagerRows,
+      updateCustomOrderFromDom,
+    });
+    applyRowFilters(row, entryRow.data);
+    tbody.append(row);
+    const pause = checkpoint();
+    if (pause) await pause;
     // A newer render may have replaced dom.order.tbody during the yield;
     // abandon this stale build so we don't repopulate outdated state.
-    if (dom.order.tbody !== tbody) return tbody;
+    if (!isRenderCurrent() || dom.order.tbody !== tbody) return tbody;
   }
 
-  applyEntryManagerStrategyFilters();
-  applyEntryManagerRecursionFilters();
-  applyEntryManagerOutletFilters();
-  applyEntryManagerAutomationIdFilters();
-  applyEntryManagerGroupFilters();
-  applyEntryManagerCharacterFilterPresenceFilters();
-  applyEntryManagerCharacterFilterValueFilters();
   updateEntryManagerSelectAllButton();
 
   return tbody;

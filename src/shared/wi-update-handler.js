@@ -1,5 +1,4 @@
 import {
-  debounce,
   delay,
   loadWorldInfo,
   saveWorldInfo,
@@ -11,6 +10,7 @@ import { mirrorRawBookFieldsToOriginalData } from './original-data.js';
 import { registerBookReloadHooks } from './book-reload.js';
 import { cloneMetadata, getSortFromMetadata, sortEntries } from './sort-helpers.js';
 import { createDeferred } from './utils.js';
+import { createUpdateQueue } from './update-queue.js';
 
 const LOG_PREFIX = '[STWID]';
 const EDITOR_ROOT_SELECTOR = '.stwid--editor';
@@ -30,8 +30,10 @@ export const registerUiRefreshHooks = ({
   renderEntry,
   entryState,
   waitForListRefreshIdle,
+  refreshSearchFilter,
+  invalidateSearchFilter,
 }) => {
-  uiRefreshHooks = { refreshList, renderEntry, entryState, waitForListRefreshIdle };
+  uiRefreshHooks = { refreshList, renderEntry, entryState, waitForListRefreshIdle, refreshSearchFilter, invalidateSearchFilter };
 };
 
 const callRefreshList = async () => {
@@ -109,8 +111,9 @@ const maybeTriggerEditorRefreshForField = ({
 // first so nothing later reads a book that is gone. Exported for the unit tests only
 // — production reaches it through updateWIChange.
 export const removeStaleCachedBooks = ({ cache, worldNames }) => {
+  const liveNames = new Set(worldNames);
   for (const [worldName, cachedWorld] of Object.entries(cache)) {
-    if (worldNames.includes(worldName)) continue;
+    if (liveNames.has(worldName)) continue;
     cachedWorld.dom.root.remove();
     delete cache[worldName];
   }
@@ -125,15 +128,26 @@ export const renderMissingBooks = async ({
   worldNames,
   loadWorldInfoForBook,
   listPanelApi,
+  isCurrent = () => true,
 }) => {
-  for (const worldName of worldNames) {
+  for (const worldName of [...worldNames]) {
+    if (!isCurrent()) return false;
     if (cache[worldName]) continue;
-    const before = Object.keys(cache).find(
-      (it) => it.toLowerCase().localeCompare(worldName.toLowerCase()) === 1,
-    );
     const worldData = await loadWorldInfoForBook(worldName);
-    await listPanelApi.renderBook(worldName, before ? cache[before].dom.root : null, worldData);
+    if (!isCurrent()) return false;
+    // A refresh or another render may have installed this book during the read.
+    if (cache[worldName]) continue;
+    const before = Object.keys(cache)
+      .filter((name) => name.toLowerCase().localeCompare(worldName.toLowerCase()) > 0)
+      .sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()))[0];
+    const beforeRoot = before ? cache[before]?.dom?.root ?? null : null;
+    await listPanelApi.renderBook(worldName, beforeRoot, worldData, null, {
+      isCurrent,
+      refreshSearch: false,
+    });
+    if (!isCurrent()) return false;
   }
+  return true;
 };
 
 // Cheap equality check for a single entry field. Array fields (key,
@@ -259,8 +273,6 @@ export const applyEntryFieldDiff = ({
 
   if (shouldRefreshEditor()) {
     cache[bookName].dom.entry[entryUid].root.click();
-  } else if (editorPanelApi) {
-    editorPanelApi.markClean(bookName, entryUid);
   }
 
   return hasChange;
@@ -278,13 +290,25 @@ export const syncBookEntriesAndDom = async ({
   getCurrentEditor,
   setCurrentEditor,
   shouldAutoRefreshEditor,
+  isCurrent = () => true,
 }) => {
+  const cachedBook = cache[bookName];
+  const cachedEntries = cachedBook?.entries;
+  const cachedDom = cachedBook?.dom;
+  const cachedEntryDoms = cachedDom?.entry;
+  const canApply = () =>
+    isCurrent() && cache[bookName] === cachedBook && cachedBook?.entries === cachedEntries &&
+    cachedBook?.dom === cachedDom && cachedDom?.entry === cachedEntryDoms;
+  if (!cachedBook || !cachedEntries || !cachedEntryDoms || !canApply()) return false;
+  // Inline edits mutate these cache objects in place. Keep reconciliation in
+  // one UI task so an older payload cannot overwrite input accepted halfway
+  // through a pass; only the existing row-render awaits may suspend it.
   const isCurrentEditor = (entryUid) => {
     const currentEditor = getCurrentEditor();
     return currentEditor?.name === bookName && String(currentEditor?.uid) === String(entryUid);
   };
   const world = { entries: {}, metadata: cloneMetadata(data.metadata) };
-  const updatedSort = getSortFromMetadata(world.metadata) ?? cache[bookName].sort;
+  const updatedSort = getSortFromMetadata(world.metadata) ?? cachedBook.sort;
   const sortChoice = {
     sort: updatedSort?.sort ?? Settings.instance.sortLogic,
     direction: updatedSort?.direction ?? Settings.instance.sortDirection,
@@ -294,16 +318,15 @@ export const syncBookEntriesAndDom = async ({
     world.entries[entryUid] = structuredClone(entryData);
   }
 
-  const updatedExtras = structuredClone(data ?? {});
-  delete updatedExtras.entries;
-  delete updatedExtras.metadata;
-  cache[bookName].extras = updatedExtras;
+  const { entries: _entries, metadata: _metadata, ...extras } = data ?? {};
+  cachedBook.extras = structuredClone(extras);
 
-  for (const entryUid of Object.keys(cache[bookName].entries)) {
+  for (const entryUid of Object.keys(cachedEntries)) {
+    if (!canApply()) return false;
     if (world.entries[entryUid]) continue;
-    cache[bookName].dom.entry[entryUid].root.remove();
-    delete cache[bookName].dom.entry[entryUid];
-    delete cache[bookName].entries[entryUid];
+    cachedEntryDoms[entryUid]?.root?.remove();
+    delete cachedEntryDoms[entryUid];
+    delete cachedEntries[entryUid];
     if (!isCurrentEditor(entryUid)) continue;
     if (editorPanelApi) {
       editorPanelApi.clearEditor();
@@ -313,7 +336,7 @@ export const syncBookEntriesAndDom = async ({
   }
 
   const newEntries = Object.keys(world.entries)
-    .filter((entryUid) => !cache[bookName].entries[entryUid])
+    .filter((entryUid) => !cachedEntries[entryUid])
     .map((entryUid) => world.entries[entryUid]);
 
   if (newEntries.length > 0) {
@@ -326,7 +349,7 @@ export const syncBookEntriesAndDom = async ({
     // per-entry re-sort produced, without the O(k * n log n) cost.
     const newEntrySet = new Set(newEntries);
     const sorted = sortEntries(
-      [...Object.values(cache[bookName].entries), ...newEntries],
+      [...Object.values(cachedEntries), ...newEntries],
       sortChoice.sort,
       sortChoice.direction,
     );
@@ -335,24 +358,27 @@ export const syncBookEntriesAndDom = async ({
     let nextAnchorEntry = null;
     for (let index = sorted.length - 1; index >= 0; index -= 1) {
       anchorEntries[index] = nextAnchorEntry;
-      if (cache[bookName].dom.entry[sorted[index].uid]) nextAnchorEntry = sorted[index];
+      if (cachedEntryDoms[sorted[index].uid]) nextAnchorEntry = sorted[index];
     }
 
     for (let index = 0; index < sorted.length; index += 1) {
+      if (!canApply()) return false;
       const entryToInsert = sorted[index];
       if (!newEntrySet.has(entryToInsert)) continue;
       // Resolve the anchor's DOM node freshly at insert time so a node that has
       // gone away degrades to an append (null) instead of throwing.
       const anchorEntry = anchorEntries[index];
       const beforeRoot = anchorEntry
-        ? (cache[bookName].dom.entry[anchorEntry.uid]?.root ?? null)
+        ? (cachedEntryDoms[anchorEntry.uid]?.root ?? null)
         : null;
       await callRenderEntry(entryToInsert, bookName, beforeRoot);
+      if (!canApply()) return false;
     }
   }
 
   let hasUpdate = false;
-  for (const [entryUid, cachedEntry] of Object.entries(cache[bookName].entries)) {
+  for (const [entryUid, cachedEntry] of Object.entries(cachedEntries)) {
+    if (!canApply()) return false;
     const updatedEntry = world.entries[entryUid];
     let needsEditorRefresh = false;
     const triggerEditorRefreshOnce = () => {
@@ -379,13 +405,25 @@ export const syncBookEntriesAndDom = async ({
     }
   }
 
-  cache[bookName].entries = world.entries;
-  const prevSort = cache[bookName].sort;
+  if (!canApply()) return false;
+  cachedBook.entries = world.entries;
+  const prevSort = cachedBook.sort;
   listPanelApi.setCacheMetadata(bookName, world.metadata);
-  const sortChanged = JSON.stringify(prevSort) !== JSON.stringify(cache[bookName].sort);
+  const sortChanged = JSON.stringify(prevSort) !== JSON.stringify(cachedBook.sort);
   if (hasUpdate || sortChanged) {
     listPanelApi.sortEntriesIfNeeded(bookName);
   }
+  const currentEditor = getCurrentEditor();
+  const currentUid = currentEditor?.uid;
+  if (
+    isCurrent() && cache[bookName] === cachedBook && currentEditor?.name === bookName &&
+    currentUid !== null && currentUid !== undefined && world.entries[currentUid]
+  ) {
+    // Only the editor can verify that a host acknowledgement matches both its
+    // mounted model and current controls. Unrelated updates never clear edits.
+    editorPanelApi?.markCleanIfSaved?.(bookName, currentUid, world.entries[currentUid]);
+  }
+  return true;
 };
 
 const createWorldInfoUpdateWaiter = ({
@@ -521,10 +559,10 @@ export const initWIUpdateHandler = ({
   });
 
   const updateSettingsChange = () => {
-    console.log(LOG_PREFIX, '[UPDATE-SETTINGS]');
     const listPanelApi = getListPanelApi();
+    const activeNames = new Set(selected_world_info);
     for (const [name, world] of Object.entries(cache)) {
-      const active = selected_world_info.includes(name);
+      const active = activeNames.has(name);
       if (world?.dom?.active && world.dom.active.checked !== active) {
         world.dom.active.checked = active;
       }
@@ -534,8 +572,7 @@ export const initWIUpdateHandler = ({
     getRefreshBookSourceLinks()?.('worldinfo_settings_updated');
   };
 
-  const updateWIChange = async (name = null, data = null) => {
-    console.log(LOG_PREFIX, '[UPDATE-WI]', name, data);
+  const processUpdateBatch = async (batch, isQueueCurrent) => {
     const cycleFinished = createDeferred();
     updateWIChangeFinished = cycleFinished;
     updateWIChangeToken += 1;
@@ -544,34 +581,57 @@ export const initWIUpdateHandler = ({
 
     try {
       await callWaitForListRefreshIdle();
+      if (!isQueueCurrent()) return;
+      uiRefreshHooks?.invalidateSearchFilter?.();
 
       const listPanelApi = getListPanelApi();
       const editorPanelApi = getEditorPanelApi();
-
-      if (name && cache[name] && !data) {
-        name = null;
-      }
-
+      const isRefreshCurrent = listPanelApi?.captureRefreshGuard?.() ?? (() => true);
+      const isCurrent = () => isQueueCurrent() && isRefreshCurrent();
       removeStaleCachedBooks({ cache, worldNames: world_names });
       await renderMissingBooks({
         cache,
         worldNames: world_names,
         loadWorldInfoForBook: loadWorldInfo,
         listPanelApi,
+        isCurrent,
       });
-      if (name && cache[name]) {
-        await syncBookEntriesAndDom({
-          bookName: name,
-          cache,
-          data,
-          listPanelApi,
-          editorPanelApi,
-          getCurrentEditor,
-          setCurrentEditor,
-          shouldAutoRefreshEditor,
-        });
+      if (!isCurrent()) {
+        // A full refresh reloads authoritative book data. Let it finish before
+        // resolving direct reconciliation callers, without applying this older
+        // batch over its replacement cache. Teardown does not wait on the UI.
+        if (isQueueCurrent()) await callWaitForListRefreshIdle();
+        return;
       }
+      const errors = new Map();
+      for (const { name, data } of batch) {
+        if (!isCurrent()) return;
+        if (!name || !cache[name]) continue;
+        try {
+          await syncBookEntriesAndDom({
+            bookName: name,
+            cache,
+            data,
+            listPanelApi,
+            editorPanelApi,
+            getCurrentEditor,
+            setCurrentEditor,
+            shouldAutoRefreshEditor,
+            isCurrent,
+          });
+          if (!isCurrent()) {
+            if (isQueueCurrent()) await callWaitForListRefreshIdle();
+            return;
+          }
+        } catch (error) {
+          // One broken book must not discard updates for the rest of the batch.
+          errors.set(name, error);
+        }
+      }
+      if (!isCurrent()) return;
       getRefreshBookSourceLinks()?.('worldinfo_updated');
+      await uiRefreshHooks?.refreshSearchFilter?.();
+      return errors;
     } finally {
       isWIUpdateInProgress = false;
       updateWIChangeStarted = createDeferred();
@@ -579,22 +639,18 @@ export const initWIUpdateHandler = ({
     }
   };
 
-  const updateWIChangeDebounced = debounce(updateWIChange);
+  const updateQueue = createUpdateQueue({ processBatch: processUpdateBatch, delayMs: 100 });
+  const updateWIChange = (name = null, data = null) =>
+    updateQueue.enqueue(name, data, { immediate: true });
+  const updateWIChangeDebounced = (name = null, data = null) => {
+    // Event emitters and MutationObserver do not consume completion promises.
+    void updateQueue.enqueue(name, data).catch((error) => {
+      if (error?.name !== 'AbortError') console.error(LOG_PREFIX, 'World Info update failed.', error);
+    });
+  };
 
-  // Reconciling a book read back from disk is exactly what updateWIChange does
-  // for a book the host reports as changed, so `book-reload.js` reuses it
-  // rather than growing a second cache-sync path. Undebounced on purpose: the
-  // caller awaits this before re-rendering the table and before telling the
-  // user what the table now shows, and the debounced variant would neither
-  // finish in time nor keep this book's data (last call wins).
-  //
-  // TRADE-OFF: a partly-failed bulk save emits WORLDINFO_UPDATED for the books
-  // that *did* save, so a debounced cycle can be in flight while this direct
-  // one runs; the two share `updateWIChangeFinished`/`updateWIChangeStarted`,
-  // so a `waitForWorldInfoUpdate` caller can resolve against the wrong cycle.
-  // Only reachable on the save-failure path, and preferable to a table that
-  // keeps showing unsaved values — but it is a real overlap, not a proof of
-  // safety.
+  // Direct failed-save reconciliation flushes pending events through the same
+  // serialized worker and waits for its own result before refreshing the table.
   registerBookReloadHooks({ reconcileBook: updateWIChange });
 
   const { waitForWorldInfoUpdate, waitForWorldInfoUpdateWithTimeout } = createWorldInfoUpdateWaiter(
@@ -608,7 +664,7 @@ export const initWIUpdateHandler = ({
   );
 
   const reopenEditorEntry = (editorState) => {
-    if (!editorState?.name || !editorState?.uid) return;
+    if (!editorState?.name || editorState?.uid === null || editorState?.uid === undefined) return;
     const entryDom = cache[editorState.name]?.dom?.entry?.[editorState.uid]?.root;
     if (entryDom) {
       entryDom.click();
@@ -646,12 +702,17 @@ export const initWIUpdateHandler = ({
 
   const onWorldInfoUpdated = (name, world) => updateWIChangeDebounced(name, world);
   const onWorldInfoSettingsUpdated = () => updateSettingsChange();
-  const cleanup = registerWorldInfoListeners({
+  const removeWorldInfoListeners = registerWorldInfoListeners({
     eventBus,
     eventTypes,
     onWorldInfoUpdated,
     onWorldInfoSettingsUpdated,
   });
+  const cleanup = () => {
+    removeWorldInfoListeners();
+    updateQueue.dispose();
+    registerBookReloadHooks({ reconcileBook: null });
+  };
 
   return {
     buildSavePayload,

@@ -67,6 +67,7 @@ const createFilterNormalizers = ({
 };
 
 const createRowFilterStateHelpers = () => {
+  let deferredRow = null;
   const updateEntryManagerRowFilterClass = (row) => {
     if (!row) return;
     const isFiltered = FILTER_DATASET_KEY_LIST.some((key) => row.dataset[key] === 'true');
@@ -75,12 +76,24 @@ const createRowFilterStateHelpers = () => {
 
   const setEntryManagerRowFilterState = (row, datasetFlagKey, filtered) => {
     if (!row) return;
-    row.dataset[datasetFlagKey] = filtered ? 'true' : 'false';
-    updateEntryManagerRowFilterClass(row);
+    const value = filtered ? 'true' : 'false';
+    if (row.dataset[datasetFlagKey] === value) return;
+    row.dataset[datasetFlagKey] = value;
+    if (deferredRow !== row) updateEntryManagerRowFilterClass(row);
   };
 
   return {
     setEntryManagerRowFilterState,
+    batchRowFilterUpdates: (row, apply) => {
+      const previous = deferredRow;
+      deferredRow = row;
+      try {
+        apply();
+      } finally {
+        deferredRow = previous;
+        updateEntryManagerRowFilterClass(row);
+      }
+    },
   };
 };
 
@@ -258,7 +271,8 @@ const createRowFilterAppliers = ({
 const createBookFilterAppliers = ({
   dom,
   entryManagerState,
-  getEntryManagerEntries,
+  getEntryManagerSourceEntries,
+  batchRowFilterUpdates,
   applyEntryManagerCharacterFilterPresenceFilterToRow,
   applyEntryManagerCharacterFilterValueFilterToRow,
   getStrategyValues,
@@ -273,120 +287,100 @@ const createBookFilterAppliers = ({
   applyEntryManagerAutomationIdFilterToRow,
   applyEntryManagerGroupFilterToRow,
 }) => {
+  // Filtering never changes row order. Read the scoped source directly instead
+  // of reconstructing and sorting every entry for each column predicate.
   const forEachEntryRowInBook = (book, callback) => {
-    const entries = getEntryManagerEntries(book, true);
-    for (const entry of entries) {
+    for (const entry of getEntryManagerSourceEntries(book)) {
       const row = dom.order.entries?.[entry.book]?.[entry.data.uid];
-      callback({ entry, row });
+      if (row) callback({ entry, row });
     }
   };
 
-  const applyEntryManagerStrategyFilters = () => {
-    const strategyValues = entryManagerState.strategyValues.length
-      ? entryManagerState.strategyValues
-      : getStrategyValues();
-    const precomputed = {
-      values: strategyValues,
-      allowed: new Set(entryManagerState.filters.strategy ?? []),
-    };
+  const simpleContext = (key, getValues, normalize = (value) => value) => ({
+    values: entryManagerState[key + 'Values'].length
+      ? entryManagerState[key + 'Values']
+      : getValues(),
+    allowed: new Set((entryManagerState.filters[key] ?? []).map(normalize)),
+  });
+  const filters = {
+    strategy: {
+      apply: applyEntryManagerStrategyFilterToRow,
+      prepare: () => simpleContext('strategy', getStrategyValues),
+    },
+    position: {
+      apply: applyEntryManagerPositionFilterToRow,
+      prepare: () => simpleContext('position', getPositionValues, String),
+    },
+    recursion: {
+      apply: applyEntryManagerRecursionFilterToRow,
+      prepare: () => ({
+        values: entryManagerState.recursionValues ?? [],
+        selectedFilters: entryManagerState.filters.recursion ?? [],
+        allowed: new Set(entryManagerState.filters.recursion ?? []),
+      }),
+    },
+    outlet: {
+      apply: applyEntryManagerOutletFilterToRow,
+      prepare: () => simpleContext('outlet', getOutletValues),
+    },
+    automationId: {
+      apply: applyEntryManagerAutomationIdFilterToRow,
+      prepare: () => simpleContext('automationId', getAutomationIdValues),
+    },
+    group: {
+      apply: applyEntryManagerGroupFilterToRow,
+      prepare: () => simpleContext('group', getGroupValues),
+    },
+    characterFilterPresence: {
+      apply: applyEntryManagerCharacterFilterPresenceFilterToRow,
+      prepare: () => ({
+        selectedFilters: entryManagerState.filters.characterFilterPresence ?? [],
+        allowed: new Set(entryManagerState.filters.characterFilterPresence ?? []),
+      }),
+    },
+    characterFilterValue: {
+      apply: applyEntryManagerCharacterFilterValueFilterToRow,
+      prepare: () => ({ allowed: new Set(entryManagerState.filters.characterFilterValue ?? []) }),
+    },
+  };
+
+  const applyFilters = (key) => {
+    const { apply, prepare } = filters[key];
+    const context = prepare();
     forEachEntryRowInBook(entryManagerState.book, ({ entry, row }) => {
-      applyEntryManagerStrategyFilterToRow(row, entry.data, precomputed);
+      apply(row, entry.data, context);
     });
   };
 
-  const applyEntryManagerPositionFilters = () => {
-    const positionValues = entryManagerState.positionValues.length
-      ? entryManagerState.positionValues
-      : getPositionValues();
-    const precomputed = {
-      values: positionValues,
-      allowed: new Set((entryManagerState.filters.position ?? []).map((value) => String(value))),
-    };
-    forEachEntryRowInBook(entryManagerState.book, ({ entry, row }) => {
-      applyEntryManagerPositionFilterToRow(row, entry.data, precomputed);
-    });
-  };
-
-  const applyEntryManagerRecursionFilters = () => {
-    const selectedFilters = entryManagerState.filters.recursion ?? [];
-    const precomputed = {
-      values: entryManagerState.recursionValues ?? [],
-      selectedFilters,
-      allowed: new Set(selectedFilters),
-    };
-    forEachEntryRowInBook(entryManagerState.book, ({ entry, row }) => {
-      applyEntryManagerRecursionFilterToRow(row, entry.data, precomputed);
-    });
-  };
-
-  const applyEntryManagerOutletFilters = () => {
-    const outletValues = entryManagerState.outletValues.length
-      ? entryManagerState.outletValues
-      : getOutletValues();
-    const precomputed = {
-      values: outletValues,
-      allowed: new Set(entryManagerState.filters.outlet ?? []),
-    };
-    forEachEntryRowInBook(entryManagerState.book, ({ entry, row }) => {
-      applyEntryManagerOutletFilterToRow(row, entry.data, precomputed);
-    });
-  };
-
-  const applyEntryManagerAutomationIdFilters = () => {
-    const automationIdValues = entryManagerState.automationIdValues.length
-      ? entryManagerState.automationIdValues
-      : getAutomationIdValues();
-    const precomputed = {
-      values: automationIdValues,
-      allowed: new Set(entryManagerState.filters.automationId ?? []),
-    };
-    forEachEntryRowInBook(entryManagerState.book, ({ entry, row }) => {
-      applyEntryManagerAutomationIdFilterToRow(row, entry.data, precomputed);
-    });
-  };
-
-  const applyEntryManagerGroupFilters = () => {
-    const groupValues = entryManagerState.groupValues.length
-      ? entryManagerState.groupValues
-      : getGroupValues();
-    const precomputed = {
-      values: groupValues,
-      allowed: new Set(entryManagerState.filters.group ?? []),
-    };
-    forEachEntryRowInBook(entryManagerState.book, ({ entry, row }) => {
-      applyEntryManagerGroupFilterToRow(row, entry.data, precomputed);
-    });
-  };
-
-  const applyEntryManagerCharacterFilterPresenceFilters = () => {
-    const selectedFilters = entryManagerState.filters.characterFilterPresence ?? [];
-    const precomputed = { selectedFilters, allowed: new Set(selectedFilters) };
-    forEachEntryRowInBook(entryManagerState.book, ({ entry, row }) => {
-      applyEntryManagerCharacterFilterPresenceFilterToRow(row, entry.data, precomputed);
-    });
-  };
-
-  const applyEntryManagerCharacterFilterValueFilters = () => {
-    const precomputed = { allowed: new Set(entryManagerState.filters.characterFilterValue ?? []) };
-    forEachEntryRowInBook(entryManagerState.book, ({ entry, row }) => {
-      applyEntryManagerCharacterFilterValueFilterToRow(row, entry.data, precomputed);
+  // Build once after header filters have been normalized, then apply all column
+  // predicates as each row is created. One class update per row, no final table
+  // scans or sorts, and all this work shares the row builder's time budget.
+  const createEntryManagerRowFilter = () => {
+    const prepared = Object.values(filters).map(({ apply, prepare }) => ({
+      apply,
+      context: prepare(),
+    }));
+    return (row, entryData) => batchRowFilterUpdates(row, () => {
+      for (const { apply, context } of prepared) apply(row, entryData, context);
     });
   };
 
   return {
     forEachEntryRowInBook,
-    applyEntryManagerCharacterFilterPresenceFilters,
-    applyEntryManagerCharacterFilterValueFilters,
-    applyEntryManagerStrategyFilters,
-    applyEntryManagerPositionFilters,
-    applyEntryManagerRecursionFilters,
-    applyEntryManagerOutletFilters,
-    applyEntryManagerAutomationIdFilters,
-    applyEntryManagerGroupFilters,
+    createEntryManagerRowFilter,
+    applyEntryManagerStrategyFilters: () => applyFilters('strategy'),
+    applyEntryManagerPositionFilters: () => applyFilters('position'),
+    applyEntryManagerRecursionFilters: () => applyFilters('recursion'),
+    applyEntryManagerOutletFilters: () => applyFilters('outlet'),
+    applyEntryManagerAutomationIdFilters: () => applyFilters('automationId'),
+    applyEntryManagerGroupFilters: () => applyFilters('group'),
+    applyEntryManagerCharacterFilterPresenceFilters: () => applyFilters('characterFilterPresence'),
+    applyEntryManagerCharacterFilterValueFilters: () => applyFilters('characterFilterValue'),
   };
 };
 
 const createFilterSyncHelpers = ({
+  dom,
   entryManagerState,
   forEachEntryRowInBook,
   getStrategyValues,
@@ -430,6 +424,7 @@ const createFilterSyncHelpers = ({
   };
 
   const clearEntryManagerScriptFilters = () => {
+    dom.order.filter.cancel?.();
     forEachEntryRowInBook(entryManagerState.book, ({ row }) => {
       setEntryManagerRowFilterState(row, FILTER_DATASET_KEYS.script, false);
     });
@@ -537,7 +532,7 @@ const createEntryManagerFilters = ({
   dom,
   entryManagerState,
   entryState,
-  getEntryManagerEntries,
+  getEntryManagerSourceEntries,
   getStrategyValues,
   getPositionValues,
   getOutletValues,
@@ -565,7 +560,7 @@ const createEntryManagerFilters = ({
     getCharacterFilterValueKeys,
   });
 
-  const { setEntryManagerRowFilterState } = createRowFilterStateHelpers();
+  const { setEntryManagerRowFilterState, batchRowFilterUpdates } = createRowFilterStateHelpers();
 
   const {
     applyEntryManagerStrategyFilterToRow,
@@ -593,6 +588,7 @@ const createEntryManagerFilters = ({
 
   const {
     forEachEntryRowInBook,
+    createEntryManagerRowFilter,
     applyEntryManagerStrategyFilters,
     applyEntryManagerPositionFilters,
     applyEntryManagerRecursionFilters,
@@ -602,9 +598,10 @@ const createEntryManagerFilters = ({
     applyEntryManagerCharacterFilterPresenceFilters,
     applyEntryManagerCharacterFilterValueFilters,
   } = createBookFilterAppliers({
+    batchRowFilterUpdates,
     dom,
     entryManagerState,
-    getEntryManagerEntries,
+    getEntryManagerSourceEntries,
     applyEntryManagerCharacterFilterPresenceFilterToRow,
     applyEntryManagerCharacterFilterValueFilterToRow,
     getStrategyValues,
@@ -629,6 +626,7 @@ const createEntryManagerFilters = ({
     syncEntryManagerGroupFilters,
     syncEntryManagerCharacterFilterValueFilters,
   } = createFilterSyncHelpers({
+    dom,
     entryManagerState,
     forEachEntryRowInBook,
     getStrategyValues,
@@ -646,6 +644,7 @@ const createEntryManagerFilters = ({
   });
 
   return {
+    createEntryManagerRowFilter,
     applyEntryManagerCharacterFilterPresenceFilterToRow,
     applyEntryManagerCharacterFilterPresenceFilters,
     applyEntryManagerCharacterFilterValueFilterToRow,

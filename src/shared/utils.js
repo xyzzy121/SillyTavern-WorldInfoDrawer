@@ -39,9 +39,28 @@ const safeToSorted = (array, comparator) =>
     ? array.toSorted(comparator)
     : array.slice().sort(comparator);
 
-const yieldToUi = () => new Promise((resolve) => setTimeout(resolve, 0));
+// scheduler.yield resumes in a new task without the nested-timer minimum delay.
+// Older browsers still get a real task boundary through setTimeout.
+const yieldToUi = () => typeof globalThis.scheduler?.yield === 'function'
+  ? globalThis.scheduler.yield()
+  : new Promise((resolve) => setTimeout(resolve, 0));
 
-// setTimeout(0) rather than a microtask: only a macrotask lets the browser
+// Call once per work item; only await a non-null result. Reset the clock after
+// yielding so time spent waiting for the browser is not charged to the next slice.
+const createWorkBudget = ({ maxItems = 50, budgetMs = 8, now = () => performance.now(), yieldTask = yieldToUi } = {}) => {
+  let started = now();
+  let items = 0;
+  return () => {
+    items += 1;
+    if (items < maxItems && now() - started < budgetMs) return null;
+    return yieldTask().then(() => {
+      items = 0;
+      started = now();
+    });
+  };
+};
+
+// A task rather than a microtask lets the browser
 // paint and handle input between batches.
 const maybeYieldToEventLoop = async (index, batchSize) => {
   if ((index + 1) % batchSize !== 0) return;
@@ -140,6 +159,7 @@ const isOutletPosition = (position) => {
 export {
   appendSortOptions,
   createDeferred,
+  createWorkBudget,
   executeSlashCommand,
   getOutletPositionValue,
   getSortLabel,

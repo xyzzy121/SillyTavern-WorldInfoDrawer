@@ -1,11 +1,11 @@
-import { maybeYieldToEventLoop } from '../../shared/utils.js';
+import { createWorkBudget } from '../../shared/utils.js';
 
 const CREATE_BOOK_LABEL = 'Create New Book';
 const IMPORT_BOOK_LABEL = 'Import Book';
 
 // Yield to the browser after this many books so "Expand/Collapse All" does not
 // freeze the tab in one synchronous burst (PERF-W5-02).
-const COLLAPSE_ALL_BATCH_SIZE = 3;
+const COLLAPSE_ALL_BATCH_SIZE = 50;
 
 // Bumped on every "Collapse/Expand All" click so a newer click supersedes an
 // older in-flight loop instead of two loops writing the DOM at the same time.
@@ -120,13 +120,15 @@ function createCollapseAllToggle({ dom, cache, getListPanelApi }) {
     // Snapshot the names up front: the loop now yields, so cache could gain or
     // lose books mid-pass; we iterate the set as it was when the click landed.
     const bookNames = Object.keys(cache);
+    const checkpoint = createWorkBudget({ maxItems: COLLAPSE_ALL_BATCH_SIZE });
     for (let i = 0; i < bookNames.length; i++) {
       // A newer click has taken over — stop so we don't fight it.
       if (myGeneration !== collapseAllGeneration) return;
       const name = bookNames[i];
       if (!cache[name]) continue; // book removed during a yield
-      listPanelApi.setBookCollapsed(name, shouldCollapse);
-      await maybeYieldToEventLoop(i, COLLAPSE_ALL_BATCH_SIZE);
+      listPanelApi.setBookCollapsed(name, shouldCollapse, { updateToggle: false });
+      const pause = checkpoint();
+      if (pause) await pause;
     }
     if (myGeneration !== collapseAllGeneration) return;
     listPanelApi.updateCollapseAllToggle();

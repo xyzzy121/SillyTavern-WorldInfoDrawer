@@ -123,10 +123,10 @@ const applyCollapseState = (name) => {
   }
 };
 
-const setBookCollapsed = (name, isCollapsed) => {
+const setBookCollapsed = (name, isCollapsed, { updateToggle = true } = {}) => {
   listPanelState.setCollapseState(name, isCollapsed);
   applyCollapseState(name);
-  updateCollapseAllToggle();
+  if (updateToggle) updateCollapseAllToggle();
 };
 
 const getBookSortChoice = (name) => {
@@ -480,12 +480,29 @@ const setSelectedBookInCoreUi = (bookName) =>
 const clickCoreUiAction = (possibleSelectors, options = {}) =>
   clickCoreUiActionBridge(possibleSelectors, options);
 
-const renderBook = async (...args) => booksViewSlice?.renderBook(...args);
-const loadList = async () => booksViewSlice?.loadList();
+const refreshSearchFilter = () => filterBarSlice?.refreshSearchFilter?.();
+const invalidateSearchFilter = () => filterBarSlice?.invalidateSearchFilter?.();
+const captureRefreshGuard = () => {
+  const generation = refreshWorkerGeneration;
+  const token = refreshRequestToken;
+  return () =>
+    listPanelInitialized && generation === refreshWorkerGeneration && token === refreshRequestToken;
+};
+const renderBook = async (...args) => {
+  const slice = booksViewSlice;
+  invalidateSearchFilter();
+  const rendered = await slice?.renderBook(...args);
+  if (rendered && slice === booksViewSlice && args[4]?.refreshSearch !== false) {
+    await refreshSearchFilter();
+  }
+  return rendered;
+};
+const loadList = async (options) => booksViewSlice?.loadList(options);
 
 const runRefreshWorker = async () => {
   const generation = refreshWorkerGeneration;
-  state.dom.drawer.body.classList.add(LOADING_STATE_CLASS);
+  const workerState = state;
+  workerState.dom.drawer.body.classList.add(LOADING_STATE_CLASS);
   try {
     try {
       while (
@@ -493,12 +510,14 @@ const runRefreshWorker = async () => {
         refreshCompletedToken < refreshRequestToken
       ) {
         const token = refreshRequestToken;
-        state.resetEditor?.();
-        captureBookCollapseStatesFromDom(state.cache, listPanelState.setCollapseState);
-        clearCacheBooks(state.cache, state.clearToast);
-        await listPanelState.loadListDebounced();
-        listPanelState.searchInput?.dispatchEvent(new Event('input'));
-        if (generation === refreshWorkerGeneration) {
+        const isCurrent = () =>
+          generation === refreshWorkerGeneration && token === refreshRequestToken;
+        workerState.resetEditor?.();
+        captureBookCollapseStatesFromDom(workerState.cache, listPanelState.setCollapseState);
+        clearCacheBooks(workerState.cache, workerState.clearToast);
+        await loadList({ isCurrent });
+        if (isCurrent()) await refreshSearchFilter();
+        if (isCurrent()) {
           refreshCompletedToken = token;
         }
       }
@@ -516,17 +535,24 @@ const runRefreshWorker = async () => {
     // A superseded worker leaves the loading class and the worker promise for
     // its live successor to manage.
     if (generation === refreshWorkerGeneration) {
-      state.dom.drawer.body.classList.remove(LOADING_STATE_CLASS);
+      workerState.dom.drawer.body.classList.remove(LOADING_STATE_CLASS);
       refreshWorkerPromise = null;
     }
   }
 };
 
 const refreshList = async () => {
+  if (!listPanelInitialized) return;
+  const generation = refreshWorkerGeneration;
   refreshRequestToken += 1;
-  refreshWorkerPromise ??= runRefreshWorker();
-  while (refreshCompletedToken < refreshRequestToken) {
-    refreshWorkerPromise ??= runRefreshWorker();
+  booksViewSlice?.invalidate();
+  invalidateSearchFilter();
+  // Defer only to the next microtask: synchronous startup/settings requests
+  // share one pass, without a debounce timer delaying opening the drawer.
+  while (generation === refreshWorkerGeneration && refreshCompletedToken < refreshRequestToken) {
+    refreshWorkerPromise ??= Promise.resolve().then(() => {
+      if (generation === refreshWorkerGeneration) return runRefreshWorker();
+    });
     await refreshWorkerPromise;
   }
 };
@@ -594,6 +620,7 @@ const setupBooks = (list) => {
 };
 
 const teardownListPanel = () => {
+  booksViewSlice?.cleanup?.();
   if (state.dom?.books) {
     if (booksRootDragOverHandler) {
       state.dom.books.removeEventListener('dragover', booksRootDragOverHandler);
@@ -713,6 +740,9 @@ const getListPanelApi = () => ({
   hasExpandedFolders,
   openFolderImportDialog: () => bookMenuSlice?.openFolderImportDialog(),
   refreshList,
+  refreshSearchFilter,
+  invalidateSearchFilter,
+  captureRefreshGuard,
   renderBook,
   selectAdd: selectionDnDSlice.selectAdd,
   selectEnd: selectionDnDSlice.selectEnd,
@@ -745,7 +775,8 @@ const initBookBrowser = (options) => {
   resetBookVisibilityState(BOOK_VISIBILITY_MODES);
   clearEntrySearchCache();
   hydrateFolderCollapseStates();
-  listPanelState.loadListDebounced = state.debounceAsync(() => loadList());
+  // Retain the state hook for integrations, but refreshList owns coalescing.
+  listPanelState.loadListDebounced = loadList;
   let folderImportInProgress = false;
 
   listPanelState.folderMenuActions = {
@@ -786,4 +817,4 @@ const initBookBrowser = (options) => {
   return getListPanelApi();
 };
 
-export { initBookBrowser, refreshList, waitForListRefreshIdle };
+export { initBookBrowser, refreshList, waitForListRefreshIdle, refreshSearchFilter, invalidateSearchFilter };

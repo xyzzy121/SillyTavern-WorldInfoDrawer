@@ -10,7 +10,7 @@ import {
   registerCharacterFilterUpdateHook,
   resetCharacterFilterCells,
 } from '../table/table.body.character-filter.js';
-import { maybeYieldToEventLoop } from '../../shared/utils.js';
+import { createWorkBudget } from '../../shared/utils.js';
 import { BULK_APPLY_BATCH_SIZE } from './bulk-edit-row.helpers.js';
 
 const resetBulkEditRow = (cleanupBulkEditRowRef) => {
@@ -32,6 +32,7 @@ const resetEntryManagerStateForRender = ({
   syncEntryManagerCharacterFilterValueFilters,
   getEditorPanelApi,
 }) => {
+  dom.order.filter.cancel?.();
   entryManagerState.book = book;
 
   // R14b — the table is about to be rebuilt, so an open inline character/tag
@@ -51,6 +52,7 @@ const resetEntryManagerStateForRender = ({
 
   dom.order.entries = {};
   dom.order.filter.root = undefined;
+  dom.order.filter.cancel = undefined;
   dom.order.filter.preview = undefined;
   dom.order.tbody = undefined;
 };
@@ -93,6 +95,8 @@ const entryManagerRowKey = (row) =>
   JSON.stringify([row.getAttribute('data-book'), row.getAttribute('data-uid')]);
 
 const renderEntryManager = async ({
+  isRenderCurrent,
+  createEntryManagerRowFilter,
   book = null,
   selectedRowKeys = null,
   cleanupBulkEditRowRef,
@@ -165,6 +169,7 @@ const renderEntryManager = async ({
   $,
   getEditorPanelApi,
 }) => {
+  if (!isRenderCurrent()) return;
   resetBulkEditRow(cleanupBulkEditRowRef);
 
   resetEntryManagerStateForRender({
@@ -189,6 +194,7 @@ const renderEntryManager = async ({
     buildSavePayload,
   });
 
+  if (!isRenderCurrent()) return;
   const entries = getEntryManagerEntries(book);
   const entryManagerRootEl = buildEntryManagerRootEl({
     entryManagerState,
@@ -266,6 +272,8 @@ const renderEntryManager = async ({
     isTrueBoolean,
   });
   const orderTableWrapEl = await buildEntryManagerTable({
+    isRenderCurrent,
+    createEntryManagerRowFilter,
     entries,
     entryManagerState,
     dom,
@@ -322,7 +330,7 @@ const renderEntryManager = async ({
   // The table build yields to the browser between row batches; if a newer
   // render took over during a yield, dom.order.tbody no longer belongs to
   // this render — drop this stale result instead of appending a second root.
-  if (!dom.order.tbody || !orderTableWrapEl.contains(dom.order.tbody)) return;
+  if (!isRenderCurrent() || !dom.order.tbody || !orderTableWrapEl?.contains(dom.order.tbody)) return;
 
   refreshDisplayToolbar();
 
@@ -332,11 +340,14 @@ const renderEntryManager = async ({
   // Apply buttons against every entry in every visible book.
   if (selectedRowKeys) {
     const rows = getEntryManagerRows();
+    const checkpoint = createWorkBudget({ maxItems: BULK_APPLY_BATCH_SIZE });
     for (let i = 0; i < rows.length; i++) {
       setEntryManagerRowSelected(rows[i], selectedRowKeys.has(entryManagerRowKey(rows[i])));
       // Same batching as setAllEntryManagerRowSelected: a scope of several
       // thousand rows must not block the UI thread in one pass.
-      await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
+      const pause = checkpoint();
+      if (pause) await pause;
+      if (!isRenderCurrent()) return;
     }
     updateEntryManagerSelectAllButton();
   }
@@ -347,6 +358,7 @@ const renderEntryManager = async ({
 };
 
 const createEntryManagerRenderer = ({
+  createEntryManagerRowFilter,
   dom,
   cache,
   entryManagerState,
@@ -417,86 +429,99 @@ const createEntryManagerRenderer = ({
   getEditorPanelApi,
 }) => {
   const cleanupBulkEditRowRef = { current: null };
+  let renderGeneration = 0;
 
   // E8/E8b — hooks the existing World Info update path (no new listener) so an
   // outside edit to the entry being edited closes its dropdown and re-renders
   // the cell. Registered here, once, for the same reason as the reload hooks.
   registerCharacterFilterUpdateHook();
 
-  const renderEntryManagerForBook = async (book = null, { selectedRowKeys = null } = {}) =>
-    renderEntryManager({
-      book,
-      selectedRowKeys,
-      cleanupBulkEditRowRef,
-      dom,
-      cache,
-      entryManagerState,
-      ENTRY_MANAGER_COLUMNS_STORAGE_KEY,
-      ENTRY_MANAGER_DEFAULT_COLUMNS,
-      ENTRY_MANAGER_HIDE_KEYS_STORAGE_KEY,
-      SORT,
-      SORT_DIRECTION,
-      appendSortOptions,
-      ensureCustomDisplayIndex,
-      saveWorldInfo,
-      buildSavePayload,
-      getEntryManagerEntries,
-      applyEntryManagerSortToDom,
-      updateEntryManagerPreview,
-      clearEntryManagerScriptFilters,
-      applyEntryManagerColumnVisibility,
-      setEntryManagerSort,
-      isEntryManagerRowSelected,
-      setEntryManagerRowSelected,
-      setAllEntryManagerRowSelected,
-      updateEntryManagerSelectAllButton,
-      applyEntryManagerStrategyFilters,
-      applyEntryManagerStrategyFilterToRow,
-      applyEntryManagerPositionFilterToRow,
-      applyEntryManagerPositionFilters,
-      applyEntryManagerRecursionFilterToRow,
-      applyEntryManagerRecursionFilters,
-      applyEntryManagerOutletFilters,
-      applyEntryManagerOutletFilterToRow,
-      applyEntryManagerAutomationIdFilters,
-      applyEntryManagerGroupFilters,
-      applyEntryManagerCharacterFilterPresenceFilters,
-      applyEntryManagerCharacterFilterValueFilters,
-      setEntryManagerRowFilterState,
-      syncEntryManagerStrategyFilters,
-      syncEntryManagerPositionFilters,
-      syncEntryManagerOutletFilters,
-      syncEntryManagerAutomationIdFilters,
-      syncEntryManagerGroupFilters,
-      syncEntryManagerCharacterFilterValueFilters,
-      focusWorldEntry,
-      entryState,
-      isOutletPosition,
-      getStrategyOptions,
-      getStrategyValues,
-      getPositionOptions,
-      getPositionValues,
-      getOutletOptions,
-      getOutletValues,
-      getAutomationIdOptions,
-      getAutomationIdValues,
-      getGroupOptions,
-      getGroupValues,
-      getCharacterFilterPickerOptions,
-      normalizeStrategyFilters,
-      normalizePositionFilters,
-      normalizeOutletFilters,
-      normalizeAutomationIdFilters,
-      normalizeGroupFilters,
-      getEntryManagerRows,
-      SlashCommandParser,
-      debounce,
-      hljs,
-      getSortableDelay,
-      isTrueBoolean,
-      $,
-      getEditorPanelApi,
-    });
+  const renderEntryManagerForBook = async (book = null, { selectedRowKeys = null } = {}) => {
+    const generation = ++renderGeneration;
+    const isRenderCurrent = () => generation === renderGeneration &&
+      dom.order.toggle?.classList.contains('stwid--state-active');
+    try {
+      await renderEntryManager({
+        isRenderCurrent,
+        createEntryManagerRowFilter,
+        book,
+        selectedRowKeys,
+        cleanupBulkEditRowRef,
+        dom,
+        cache,
+        entryManagerState,
+        ENTRY_MANAGER_COLUMNS_STORAGE_KEY,
+        ENTRY_MANAGER_DEFAULT_COLUMNS,
+        ENTRY_MANAGER_HIDE_KEYS_STORAGE_KEY,
+        SORT,
+        SORT_DIRECTION,
+        appendSortOptions,
+        ensureCustomDisplayIndex,
+        saveWorldInfo,
+        buildSavePayload,
+        getEntryManagerEntries,
+        applyEntryManagerSortToDom,
+        updateEntryManagerPreview,
+        clearEntryManagerScriptFilters,
+        applyEntryManagerColumnVisibility,
+        setEntryManagerSort,
+        isEntryManagerRowSelected,
+        setEntryManagerRowSelected,
+        setAllEntryManagerRowSelected,
+        updateEntryManagerSelectAllButton,
+        applyEntryManagerStrategyFilters,
+        applyEntryManagerStrategyFilterToRow,
+        applyEntryManagerPositionFilterToRow,
+        applyEntryManagerPositionFilters,
+        applyEntryManagerRecursionFilterToRow,
+        applyEntryManagerRecursionFilters,
+        applyEntryManagerOutletFilters,
+        applyEntryManagerOutletFilterToRow,
+        applyEntryManagerAutomationIdFilters,
+        applyEntryManagerGroupFilters,
+        applyEntryManagerCharacterFilterPresenceFilters,
+        applyEntryManagerCharacterFilterValueFilters,
+        setEntryManagerRowFilterState,
+        syncEntryManagerStrategyFilters,
+        syncEntryManagerPositionFilters,
+        syncEntryManagerOutletFilters,
+        syncEntryManagerAutomationIdFilters,
+        syncEntryManagerGroupFilters,
+        syncEntryManagerCharacterFilterValueFilters,
+        focusWorldEntry,
+        entryState,
+        isOutletPosition,
+        getStrategyOptions,
+        getStrategyValues,
+        getPositionOptions,
+        getPositionValues,
+        getOutletOptions,
+        getOutletValues,
+        getAutomationIdOptions,
+        getAutomationIdValues,
+        getGroupOptions,
+        getGroupValues,
+        getCharacterFilterPickerOptions,
+        normalizeStrategyFilters,
+        normalizePositionFilters,
+        normalizeOutletFilters,
+        normalizeAutomationIdFilters,
+        normalizeGroupFilters,
+        getEntryManagerRows,
+        SlashCommandParser,
+        debounce,
+        hljs,
+        getSortableDelay,
+        isTrueBoolean,
+        $,
+        getEditorPanelApi,
+      });
+    } catch (error) {
+      // An obsolete render must not close or report failure against the current
+      // editor. The request that still owns the UI retains normal error handling.
+      if (isRenderCurrent()) throw error;
+    }
+  };
 
   // After a book is reloaded from disk (e.g. a bulk save that failed on it),
   // the cache holds the saved truth while the table still shows the rejected

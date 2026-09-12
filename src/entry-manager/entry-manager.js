@@ -466,6 +466,7 @@ export const initEntryManager = ({
   };
 
   const {
+    createEntryManagerRowFilter,
     applyEntryManagerRecursionFilterToRow,
     applyEntryManagerRecursionFilters,
     applyEntryManagerPositionFilterToRow,
@@ -499,7 +500,7 @@ export const initEntryManager = ({
     dom,
     entryManagerState,
     entryState,
-    getEntryManagerEntries,
+    getEntryManagerSourceEntries,
     getStrategyValues,
     getPositionValues,
     getOutletValues,
@@ -529,6 +530,7 @@ export const initEntryManager = ({
   };
 
   const { renderEntryManager } = initEntryManagerRenderer({
+    createEntryManagerRowFilter,
     dom,
     cache,
     entryManagerState,

@@ -102,14 +102,13 @@ function createEntryManagerToggleButton({
     'aria-label',
     'Open Entry Manager for current Book Visibility scope',
   );
-  // While an open is still settling, every further click is ignored: the
-  // toggle reads active from the moment openEntryManager starts, so a
-  // mid-render click would otherwise take the close path and leave the drawer
-  // half-open once the suspended open re-applies its panel class.
+  // Closing remains available while rows are being built. The renderer checks
+  // this toggle after each yield, so closing also cancels that pending render.
+  // Wait for it to settle before accepting another open from this button.
   let openInFlight = false;
   entryManagerToggleButton.addEventListener('click', async () => {
-    if (openInFlight) return;
     const isActive = entryManagerToggleButton.classList.contains(ACTIVE_STATE_CLASS);
+    if (openInFlight && !isActive) return;
     if (
       !isActive &&
       warnIfUnsavedEdits(

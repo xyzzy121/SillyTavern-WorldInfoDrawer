@@ -402,6 +402,7 @@ function buildFilterToggle({
   filterToggle.classList.add('fa-solid', 'fa-fw', 'fa-filter');
   setTooltip(filterToggle, 'Open filters. Apply Order only affects rows that are not filtered out');
   filterToggle.addEventListener('click', () => {
+    dom.order.filter.cancel?.();
     const is = dom.order.filter.root.classList.toggle('stwid--state-active');
     if (is) {
       updateEntryManagerPreview(getEntryManagerEntries(entryManagerState.book, true));

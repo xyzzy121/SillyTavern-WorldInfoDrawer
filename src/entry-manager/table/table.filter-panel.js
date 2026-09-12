@@ -1,4 +1,4 @@
-import { maybeYieldToEventLoop } from '../../shared/utils.js';
+import { createWorkBudget } from '../../shared/utils.js';
 import { closeOpenCharacterFilterDropdown } from './table.body.character-filter.js';
 
 const ROW_FILTER_KEY_SCRIPT = 'stwidFilterScript';
@@ -36,37 +36,6 @@ function buildFilterPanelHintAndError({ entryManagerState }) {
   return { hintEl, errorEl };
 }
 
-function isLatestFilterRun(filterStack, closure) {
-  return filterStack.at(-1) === closure;
-}
-
-function setAllRowsVisible(entries, dom, setEntryManagerRowFilterState) {
-  for (const entryRef of entries) {
-    const row = getEntryManagerRow(dom, entryRef);
-    if (!row) continue;
-    // Third parameter means "filtered out" (see setEntryManagerRowFilterState in
-    // logic.filters.js) — false here so a run that never reaches a row leaves it visible.
-    setEntryManagerRowFilterState(row, ROW_FILTER_KEY_SCRIPT, false);
-  }
-}
-
-async function applyScriptResultToRow({
-  closure,
-  entryRef,
-  dom,
-  setEntryManagerRowFilterState,
-  isTrueBoolean,
-}) {
-  closure.scope.setVariable(
-    'entry',
-    JSON.stringify(Object.assign({ book: entryRef.book }, entryRef.data)),
-  );
-  const result = (await closure.execute()).pipe;
-  const row = getEntryManagerRow(dom, entryRef);
-  if (!row) return;
-  setEntryManagerRowFilterState(row, ROW_FILTER_KEY_SCRIPT, !isTrueBoolean(result));
-}
-
 function attachFilterScriptHandlers({
   dom,
   entryManagerState,
@@ -80,7 +49,10 @@ function attachFilterScriptHandlers({
   filterScriptTextarea,
   errorEl,
 }) {
-  let filterStack = [];
+  const filterRoot = dom.order.filter.root;
+  let generation = 0;
+  const cancel = () => { generation += 1; };
+  dom.order.filter.cancel = cancel;
 
   const updateScroll = () => {
     syntaxEl.scrollTop = filterScriptTextarea.scrollTop;
@@ -97,7 +69,8 @@ function attachFilterScriptHandlers({
     () => localStorage.setItem(FILTER_STORAGE_KEY, filterScriptTextarea.value),
     200,
   );
-  const isActive = () => dom.order.filter.root?.classList.contains('stwid--state-active');
+  const isActive = () => dom.order.filter.root === filterRoot && filterRoot.isConnected &&
+    filterRoot.classList.contains('stwid--state-active');
 
   const showFilterError = (message) => {
     if (!message) {
@@ -111,61 +84,66 @@ function attachFilterScriptHandlers({
 
   const updateList = async () => {
     if (!isActive()) return;
+    const runGeneration = ++generation;
+    const tbody = dom.order.tbody;
+    if (!tbody) return;
+    const isCurrent = () => runGeneration === generation && isActive() && dom.order.tbody === tbody;
+    const filterScriptSource = filterScriptTextarea.value;
+    const book = entryManagerState.book;
+    const checkpoint = createWorkBudget({ maxItems: SCRIPT_FILTER_BATCH_SIZE });
 
-    // R14b — a filter run can hide the row an inline character/tag filter
-    // dropdown is attached to, and this is the one filter path that never goes
-    // through a dropdown of its own (the column filter menus close it for free,
-    // since only one multiselect menu may be open at a time). Closing writes
-    // nothing.
     closeOpenCharacterFilterDropdown();
-
-    let closure = null;
-
     try {
-      // Acquire first, push only on success — a failed acquisition must leave
-      // the stack untouched and surface through the catch below.
-      closure = new (await SlashCommandParser.getScope())();
-      filterStack.push(closure);
+      const Scope = await SlashCommandParser.getScope();
+      if (!isCurrent()) return;
+      const closure = new Scope();
+      await closure.compile(`return async function entryManagerFilter(data) {${filterScriptSource}}();`);
+      if (!isCurrent()) return;
 
-      const filterScriptSource = filterScriptTextarea.value;
-      const compiledScriptSource = `return async function entryManagerFilter(data) {${filterScriptSource}}();`;
-      await closure.compile(compiledScriptSource);
-      if (!isActive()) return;
-
-      const entries = getEntryManagerEntries(entryManagerState.book, true);
-      setAllRowsVisible(entries, dom, setEntryManagerRowFilterState);
-
-      for (let i = 0; i < entries.length; i++) {
-        if (!isActive()) return;
-        if (!isLatestFilterRun(filterStack, closure)) return;
-        await applyScriptResultToRow({
-          closure,
-          entryRef: entries[i],
-          dom,
-          setEntryManagerRowFilterState,
-          isTrueBoolean,
-        });
-        await maybeYieldToEventLoop(i, SCRIPT_FILTER_BATCH_SIZE);
+      // Scripts run sequentially in the displayed sort order. Only the column
+      // predicates use unordered traversal; scripts may depend on execution order.
+      const entries = getEntryManagerEntries(book, true);
+      for (const entryRef of entries) {
+        if (!isCurrent()) return;
+        const row = getEntryManagerRow(dom, entryRef);
+        if (row) setEntryManagerRowFilterState(row, ROW_FILTER_KEY_SCRIPT, false);
+        const pause = checkpoint();
+        if (pause) await pause;
       }
 
-      showFilterError(null);
+      for (const entryRef of entries) {
+        if (!isCurrent()) return;
+        closure.scope.setVariable(
+          'entry',
+          JSON.stringify(Object.assign({ book: entryRef.book }, entryRef.data)),
+        );
+        const result = (await closure.execute()).pipe;
+        // The previous script can still be executing when input, panel closure,
+        // or a new table supersedes it. Never publish that obsolete result.
+        if (!isCurrent()) return;
+        const row = getEntryManagerRow(dom, entryRef);
+        if (row) setEntryManagerRowFilterState(row, ROW_FILTER_KEY_SCRIPT, !isTrueBoolean(result));
+        const pause = checkpoint();
+        if (pause) await pause;
+      }
+      if (isCurrent()) showFilterError(null);
     } catch (error) {
+      if (!isCurrent()) return;
       const msg = error instanceof Error ? error.message : String(error);
       showFilterError(`Filter error: ${msg}`);
-    } finally {
-      if (closure) {
-        const idx = filterStack.indexOf(closure);
-        if (idx !== -1) filterStack.splice(idx, 1);
-      }
     }
   };
 
-  const updateListDebounced = debounce(() => updateList(), 1000);
+  const updateListDebounced = debounce((expectedGeneration) => {
+    if (expectedGeneration === generation) return updateList();
+  }, 250);
   filterScriptTextarea.addEventListener('input', () => {
+    // Stop an old run immediately; the debounce delays only the replacement.
+    cancel();
     saveFilterDebounced();
     updateHighlightDebounced();
     updateScrollDebounced();
-    updateListDebounced();
+    updateListDebounced(generation);
   });
   filterScriptTextarea.addEventListener('scroll', () => {
     updateScrollDebounced();
