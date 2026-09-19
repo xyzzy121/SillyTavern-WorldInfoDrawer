@@ -3348,6 +3348,95 @@ body.stwid--ams-disabled .stwid--editor .inline-drawer:has(> .userSettingsInnerE
 
 /* -------------------------------------------------------------------------- */
 
+.stwid--add-lorebooks-dialog {
+  width: min(42rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+}
+
+.stwid--add-lorebooks-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65em;
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.stwid--add-lorebooks-content h3,
+.stwid--add-lorebooks-content p {
+  margin: 0;
+}
+
+.stwid--add-lorebooks-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+
+.stwid--add-lorebooks-toolbar > span {
+  margin-right: auto;
+}
+
+.stwid--add-lorebooks-content .menu_button {
+  width: auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.stwid--add-lorebooks-list {
+  max-height: min(48vh, 28rem);
+  overflow-y: auto;
+  border: 1px solid var(--SmartThemeBorderColor);
+  border-radius: 6px;
+  padding: 0.3em;
+}
+
+.stwid--add-lorebooks-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65em;
+  padding: 0.5em;
+  cursor: pointer;
+}
+
+.stwid--add-lorebooks-row:has(input:disabled) {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.stwid--add-lorebooks-row:hover,
+.stwid--add-lorebooks-row:focus-within {
+  background: var(--white10a);
+}
+
+.stwid--add-lorebooks-row input {
+  flex: 0 0 auto;
+  margin-top: 0.2em;
+}
+
+.stwid--add-lorebooks-row > span {
+  min-width: 0;
+}
+
+.stwid--add-lorebooks-row small,
+.stwid--add-lorebooks-name {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.stwid--add-lorebooks-status:empty {
+  display: none;
+}
+
+.stwid--add-lorebooks-content .popup-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5em;
+}
+
 .stwid--help-toast {
   margin: 0;
   padding-left: 0.5em;

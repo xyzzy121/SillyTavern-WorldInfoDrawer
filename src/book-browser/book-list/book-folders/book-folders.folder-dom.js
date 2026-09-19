@@ -9,6 +9,7 @@ import {
   entryManagerFolderAction,
   deleteFolderAction,
 } from './book-folders.folder-actions.js';
+import { addLorebooksToFolderAction } from './book-folders.add-lorebooks.js';
 
 const FOLDER_MENU_ANCHOR_NAME = '--stwid--ctx-anchor';
 
@@ -34,7 +35,14 @@ const createFolderMenuItem = ({ itemClass, iconClass, label, onSelect }) => {
   {
     item.classList.add('stwid--list-dropdown__item', 'stwid--menu-item');
     item.classList.add(itemClass);
+    item.setAttribute('role', 'button');
+    item.tabIndex = 0;
     item.addEventListener('click', onSelect);
+    item.addEventListener('keydown', (evt) => {
+      if (evt.key !== 'Enter' && evt.key !== ' ') return;
+      evt.preventDefault();
+      item.click();
+    });
     const menuIcon = document.createElement('i');
     {
       menuIcon.classList.add('stwid--icon');
@@ -86,8 +94,16 @@ const buildFolderMenuOverlay = ({ folderName, menuActions, menuTrigger }) => {
     const closeFolderMenu = () => {
       blocker.remove();
       menuTrigger.style.anchorName = '';
+      menuTrigger.setAttribute('aria-expanded', 'false');
+      menuTrigger.focus();
     };
     blocker.classList.add('stwid--blocker');
+    blocker.addEventListener('keydown', (evt) => {
+      if (evt.key !== 'Escape') return;
+      evt.preventDefault();
+      evt.stopPropagation();
+      closeFolderMenu();
+    });
     blocker.addEventListener('mousedown', (evt) => {
       evt.stopPropagation();
     });
@@ -104,6 +120,17 @@ const buildFolderMenuOverlay = ({ folderName, menuActions, menuTrigger }) => {
     const menu = document.createElement('div');
     {
       menu.classList.add('stwid--list-dropdown__menu', 'stwid--menu');
+      menu.append(
+        createFolderMenuItem({
+          itemClass: 'stwid--add-lorebooks',
+          iconClass: 'fa-list-check',
+          label: 'Add Lorebooks…',
+          onSelect: () => {
+            closeFolderMenu();
+            addLorebooksToFolderAction({ folderName, menuActions });
+          },
+        }),
+      );
       menu.append(
         createFolderMenuItem({
           itemClass: 'stwid--rename',
@@ -229,11 +256,24 @@ const createFolderActionsDom = ({ folderName, header, menuActions }) => {
         menuTrigger.classList.add('fa-solid', 'fa-fw', 'fa-ellipsis-vertical');
         menuTrigger.title = 'Folder menu';
         menuTrigger.setAttribute('aria-label', 'Folder menu');
+        menuTrigger.setAttribute('role', 'button');
+        menuTrigger.setAttribute('aria-expanded', 'false');
+        menuTrigger.tabIndex = 0;
+        menuTrigger.addEventListener('keydown', (evt) => {
+          if (evt.key !== 'Enter' && evt.key !== ' ') return;
+          evt.preventDefault();
+          evt.stopPropagation();
+          menuTrigger.click();
+        });
         menuTrigger.addEventListener('click', (evt) => {
           evt.preventDefault();
           evt.stopPropagation();
+          if (menuTrigger.getAttribute('aria-expanded') === 'true') return;
           menuTrigger.style.anchorName = FOLDER_MENU_ANCHOR_NAME;
-          document.body.append(buildFolderMenuOverlay({ folderName, menuActions, menuTrigger }));
+          menuTrigger.setAttribute('aria-expanded', 'true');
+          const overlay = buildFolderMenuOverlay({ folderName, menuActions, menuTrigger });
+          document.body.append(overlay);
+          overlay.querySelector('.stwid--menu-item')?.focus();
         });
         actions.append(menuTrigger);
       }

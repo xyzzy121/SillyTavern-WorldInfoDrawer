@@ -264,6 +264,7 @@ test('refresh worker coalesces startup calls and replaces obsolete work with one
     'sort-helpers.js': { cloneMetadata: structuredClone },
     'book-folders.lorebook-folders.js': Object.fromEntries(['getFolderFromMetadata', 'getFolderRegistry', 'registerFolderName', 'sanitizeFolderMetadata', 'setFolderInMetadata'].map((key) => [key, noop])),
     'book-folders.folder-actions.js': { createBookInFolder: noop, setFolderBooksActive: noop },
+    'book-folders.add-lorebooks.js': { closeAddLorebooksDialog: noop },
     'book-browser.state.js': {
       listPanelState,
       captureBookCollapseStatesFromDom: noop,

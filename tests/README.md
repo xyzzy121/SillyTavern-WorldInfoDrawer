@@ -1,4 +1,4 @@
-# Performance regression tests
+# Regression tests
 
 Run from the extension directory with Node.js (verified with Node 26.2.0):
 
@@ -16,6 +16,7 @@ suite covers:
 
 | Test file | Coverage |
 | --- | --- |
+| `folder-bulk-add.test.mjs` | Exact lorebook identities, search/selection retention, current-folder exclusion, sequential saves, duplicate-submit prevention, partial failure and explicit retry, dirty-editor and teardown guards, one refresh, full latest-book metadata/entry preservation, and dialog controls/cleanup. |
 | `browser-loading.test.mjs` | Four-request concurrency, shared in-flight reads, yielding cached reads, failure and disposal, sorted rendering, collapse state, replacement rows, and refresh coalescing. |
 | `search-performance.test.mjs` | The 10,000-entry cache bound, updates and pruning at capacity, UID zero, searches that avoid entry traversal, staged match evaluation, hiding only confirmed misses, restoring partially filtered rows, identity guards, cleanup, and one final folder update. |
 | `entry-manager-performance.test.mjs` | Fused initial predicates, scoped unsorted filtering, unchanged DOM writes, sequential script execution, cancellation across script/render awaits, selection restoration, and closing while opening with dirty-editor protection. |
@@ -28,3 +29,18 @@ suite covers:
 These tests use synthetic data and host adapters; they do not require a running
 SillyTavern server. Browser validation and measurements are documented in
 [PERFORMANCE.md](../PERFORMANCE.md).
+
+## Bulk folder assignment validation — 2026-09-12
+
+The full Node suite passes 94 tests, including 13 new bulk-assignment cases.
+An isolated SillyTavern profile also passed three grouped browser checks covering
+search selection retention, selecting visible books and clearing selections,
+two actual folder saves with entries/custom metadata/top-level fields preserved,
+reload persistence, already-assigned books being unavailable, and Escape dismissal.
+The browser run reported no page errors. The Node tests additionally cover
+partial failures and explicit retry, duplicate submissions, unsaved editor
+protection, teardown during a save, and the single final refresh.
+Desktop and narrow-screen screenshots were inspected after correcting the host's
+minimum-content button sizing: toolbar labels remain readable on one line, the
+toolbar wraps as needed, long lorebook names wrap within the list, and the primary
+actions remain visible.

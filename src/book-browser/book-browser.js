@@ -10,6 +10,7 @@ import {
   createBookInFolder,
   setFolderBooksActive,
 } from './book-list/book-folders/book-folders.folder-actions.js';
+import { closeAddLorebooksDialog } from './book-list/book-folders/book-folders.add-lorebooks.js';
 import {
   captureBookCollapseStatesFromDom,
   clearCacheBooks,
@@ -620,6 +621,7 @@ const setupBooks = (list) => {
 };
 
 const teardownListPanel = () => {
+  if (listPanelState.folderMenuActions) closeAddLorebooksDialog(listPanelState.folderMenuActions);
   booksViewSlice?.cleanup?.();
   if (state.dom?.books) {
     if (booksRootDragOverHandler) {
@@ -781,6 +783,7 @@ const initBookBrowser = (options) => {
 
   listPanelState.folderMenuActions = {
     Popup: state.Popup,
+    isDirtyCheck: state.isDirtyCheck,
     POPUP_RESULT: state.POPUP_RESULT,
     buildSavePayload: state.buildSavePayload,
     cache: state.cache,
