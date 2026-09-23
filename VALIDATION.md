@@ -1,4 +1,32 @@
-# WorldInfoDrawer 2.3.4 validation
+# WorldInfoDrawer validation
+
+## Version 2.3.5 — mobile bulk picker
+
+Updated September 23, 2026. The bulk picker can scroll its whole form when a long
+folder name or short viewport leaves insufficient room for the footer. Buttons,
+search, and selectable rows have a minimum height of 44 pixels for touch input.
+The regression scenario uses a 300-character folder name at 320 × 568 and
+667 × 300, where the previous footer was clipped. All 94 regression tests passed,
+and `git diff --check` found no whitespace errors. One earlier run intermittently
+failed the existing request-admission timing assertion; that test file and the
+subsequent full suite passed without changes.
+
+The isolated SillyTavern 1.18.0 host passed Chromium touch-emulation checks at
+320 × 568, 360 × 800, 390 × 844, 430 × 932, 844 × 390, 390 × 420, and 768 × 1024.
+Long and unusual lorebook names and 300-character folder names remained readable;
+touch filtering, selection, and clearing worked. Screenshots were visually
+inspected, and no browser page errors were reported.
+
+Actual emulated touch swipes scrolled the bulk form at 320 × 568, 844 × 390,
+and 390 × 420. After scrolling, the footer was entirely inside the viewport,
+the buttons received hits at their visible coordinates, and tapping Cancel
+dismissed the dialog. Touch action buttons measured at least 44 pixels high.
+
+These are browser-emulation results, not physical-device or Safari tests. The
+390 × 420 case checks reduced available height; it does not reproduce a native
+mobile keyboard or browser-toolbar behavior.
+
+## Version 2.3.4
 
 Validated on September 12, 2026. The bulk folder assignment update was checked with the existing Node test suite and an isolated SillyTavern 1.18.0 profile containing synthetic lorebooks.
 

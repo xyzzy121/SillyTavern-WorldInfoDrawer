@@ -21,7 +21,7 @@ This is a forked version of LenAnderson's WorldInfoDrawer extension for SillyTav
 
 ### Install this local checkout
 
-The bulk-add changes in this local 2.3.4 checkout have not been published at the upstream URL above. To install them, stop SillyTavern and copy the contents of this checkout into your active profile's `data/<profile>/extensions/SillyTavern-WorldInfoDrawer` directory (`default-user` for the default profile). Keep `manifest.json`, `index.js`, `settings.html`, `style.css`, and the full `src` directory together.
+The changes in this local 2.3.5 checkout have not been published at the upstream URL above. To install them, stop SillyTavern and copy the contents of this checkout into your active profile's `data/<profile>/extensions/SillyTavern-WorldInfoDrawer` directory (`default-user` for the default profile). Keep `manifest.json`, `index.js`, `settings.html`, `style.css`, and the full `src` directory together.
 
 If WorldInfoDrawer is already installed, replace its existing extension folder instead of adding a second copy. Shared installations may instead be under `public/scripts/extensions/third-party`; update that existing copy and keep only one WorldInfoDrawer installation active. Restart SillyTavern and reload the page after copying. See [VALIDATION.md](VALIDATION.md) for the checks performed on this update.
 
@@ -43,6 +43,7 @@ If WorldInfoDrawer is already installed, replace its existing extension folder i
 - Use folder actions (rename, delete, export, import, create book) from one menu.
 - Choose **Add Lorebooks…** from a folder menu to move several existing books into that folder. Search by book or folder name, select individual books or **Select visible**, then choose **Add selected**. Selections remain checked when the search changes; **Clear selection** clears all selections, including hidden results.
 - Each book belongs to one folder, so adding a book moves it from its previous folder. Books already in the destination are marked and cannot be selected. Save or discard editor drafts first; if any moves fail, the dialog keeps those books selected for **Retry selected**. Successful moves stay saved, and the drawer refreshes once after the batch.
+- On small screens, the whole add-lorebooks form can scroll so long folder names never hide the action buttons. Touchscreen controls have a minimum height of 44 pixels.
 - Run Entry Manager on a single folder scope when you only want to reorder books in that folder.
 
 ### 📇 Entry Manager for bulk work

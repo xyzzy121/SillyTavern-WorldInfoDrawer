@@ -3362,6 +3362,17 @@ body.stwid--ams-disabled .stwid--editor .inline-drawer:has(> .userSettingsInnerE
   overflow-wrap: anywhere;
 }
 
+/* The host clips popup contents by default. Let long folder names and short
+   viewports scroll the whole form so its footer always remains reachable. */
+.stwid--add-lorebooks-dialog .popup-content {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.stwid--add-lorebooks-content > * {
+  flex-shrink: 0;
+}
+
 .stwid--add-lorebooks-content h3,
 .stwid--add-lorebooks-content p {
   margin: 0;
@@ -3435,6 +3446,14 @@ body.stwid--ams-disabled .stwid--editor .inline-drawer:has(> .userSettingsInnerE
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.5em;
+}
+
+@media (any-pointer: coarse) {
+  .stwid--add-lorebooks-content .menu_button,
+  .stwid--add-lorebooks-content .text_pole,
+  .stwid--add-lorebooks-row {
+    min-height: 44px;
+  }
 }
 
 .stwid--help-toast {
