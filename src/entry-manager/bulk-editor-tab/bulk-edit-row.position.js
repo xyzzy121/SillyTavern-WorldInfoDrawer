@@ -40,9 +40,11 @@ function runBulkApplyForSelectedEntries({
     for (let i = 0; i < targets.length; i++) {
       books.add(targets[i].bookName);
       perTargetUpdate(targets[i]);
-      await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
+      targets[i].tr.stwidRefreshPending?.();
+      if ((i + 1) % BULK_APPLY_BATCH_SIZE === 0) await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
     }
     afterTargetsUpdate?.(targets);
+    dom.order.refreshSelectionCount?.();
     const { failedBooks } = await saveUpdatedBooks(books, saveWorldInfo, buildSavePayload);
     // Leave the row marked dirty when a book did not save, so the user can retry.
     if (failedBooks.length === 0) applyButton.classList.remove(APPLY_DIRTY_CLASS);
@@ -109,6 +111,9 @@ function buildBulkPositionControls({
           mirrorEntryFieldsToOriginalData(cache[bookName], entryData, ['position']);
           const domPos = cache?.[bookName]?.dom?.entry?.[uid]?.position;
           if (domPos) domPos.value = value;
+          const rowPosition = tr.querySelector('[name="position"]');
+          if (rowPosition) rowPosition.value = value;
+          tr.stwidRefreshCell?.('outlet');
           applyEntryManagerPositionFilterToRow(tr, entryData);
         },
       })();

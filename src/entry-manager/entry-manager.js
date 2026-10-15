@@ -20,11 +20,13 @@ import {
 import { registerCharacterFilterSortResolver } from '../shared/sort-helpers.js';
 import {
   buildCharacterFilterPickerOptions,
+  createCharacterFilterIndex,
   formatCharacterFilter,
   toCharacterFilterValueKeys,
 } from './entry-manager.utils.js';
 import { BULK_APPLY_BATCH_SIZE } from './bulk-editor-tab/bulk-edit-row.helpers.js';
 import { maybeYieldToEventLoop } from '../shared/utils.js';
+import { affectsEntrySort, registerEntryChangeHook } from '../shared/wi-update-handler.js';
 
 const ROW_SELECTED_CLASS = 'stwid--apply-selected';
 const ICON_UNCHECKED_CLASS = 'fa-square';
@@ -252,29 +254,40 @@ const createSelectionAndPreviewHelpers = ({ dom }) => {
 
   const setEntryManagerRowSelected = (row, selected) => {
     if (!row) return;
-    row.classList.toggle(ROW_SELECTED_CLASS, selected);
-    row.setAttribute('aria-selected', selected ? 'true' : 'false');
+    const counter = row.stwidSelectionCounter ?? dom.order.selection?.counter;
+    if (counter) {
+      row.stwidSelectionCounter = counter;
+      counter.setSelected(row, selected, row.classList.contains('stwid--state-filtered'));
+      row.stwidOnFilterStateChanged ??= (filtered) => counter.setFiltered(row, filtered);
+    }
+    if (row.classList.contains(ROW_SELECTED_CLASS) !== selected) row.classList.toggle(ROW_SELECTED_CLASS, selected);
+    const ariaSelected = selected ? 'true' : 'false';
+    if (row.getAttribute('aria-selected') !== ariaSelected) row.setAttribute('aria-selected', ariaSelected);
     const icon = row.querySelector('.stwid--order-select .stwid--icon');
     if (icon) {
-      icon.classList.toggle(ICON_UNCHECKED_CLASS, !selected);
-      icon.classList.toggle(ICON_CHECKED_CLASS, selected);
+      if (icon.classList.contains(ICON_UNCHECKED_CLASS) === selected) icon.classList.toggle(ICON_UNCHECKED_CLASS, !selected);
+      if (icon.classList.contains(ICON_CHECKED_CLASS) !== selected) icon.classList.toggle(ICON_CHECKED_CLASS, selected);
     }
   };
 
   const setAllEntryManagerRowSelected = async (selected, rows = getEntryManagerRows()) => {
     for (let i = 0; i < rows.length; i++) {
       setEntryManagerRowSelected(rows[i], selected);
-      await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
+      if ((i + 1) % BULK_APPLY_BATCH_SIZE === 0) await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
     }
   };
 
   const updateEntryManagerSelectAllButton = (rows) => {
     if (!dom.order.selectAll) return;
-    const rowList = rows ?? getEntryManagerRows();
-    const allSelected = rowList.length > 0 && rowList.every(isEntryManagerRowSelected);
-    dom.order.selectAll.classList.toggle(STATE_ACTIVE_CLASS, allSelected);
-    dom.order.selectAll.classList.toggle(ICON_CHECKED_CLASS, allSelected);
-    dom.order.selectAll.classList.toggle(ICON_UNCHECKED_CLASS, !allSelected);
+    const selection = dom.order.selection;
+    const counts = selection?.tbody === dom.order.tbody ? selection.counter.snapshot() : null;
+    const rowList = counts ? null : rows ?? getEntryManagerRows();
+    const allSelected = counts
+      ? counts.total > 0 && counts.total === counts.selected
+      : rowList.length > 0 && rowList.every(isEntryManagerRowSelected);
+    for (const [className, enabled] of [[STATE_ACTIVE_CLASS, allSelected], [ICON_CHECKED_CLASS, allSelected], [ICON_UNCHECKED_CLASS, !allSelected]]) {
+      if (dom.order.selectAll.classList.contains(className) !== enabled) dom.order.selectAll.classList.toggle(className, enabled);
+    }
   };
 
   return {
@@ -375,7 +388,8 @@ export const initEntryManager = ({
   // resolution, which lives in this feature folder. `shared/` stays free of
   // feature-folder imports (ARCHITECTURE.md), so the formatter is handed to the
   // sorter here rather than imported by it.
-  registerCharacterFilterSortResolver(formatCharacterFilter);
+  let characterSortIndex;
+  registerCharacterFilterSortResolver((entry) => formatCharacterFilter(entry, characterSortIndex));
 
   const entryManagerState = createEntryManagerState({ SORT, SORT_DIRECTION });
   let scopedBookNames = null;
@@ -395,8 +409,15 @@ export const initEntryManager = ({
     entryManagerState,
     getScopedBookNames,
   });
-  const getEntryManagerEntries = (book = entryManagerState.book, includeDom = false) =>
-    getBaseEntryManagerEntries(book, includeDom, dom);
+  const getEntryManagerEntries = (book = entryManagerState.book, includeDom = false) => {
+    characterSortIndex = entryManagerState.sort === SORT.CHARACTER_FILTER
+      ? createCharacterFilterIndex() : undefined;
+    try {
+      return getBaseEntryManagerEntries(book, includeDom, dom);
+    } finally {
+      characterSortIndex = undefined;
+    }
+  };
   // Ticket 08 — what the R22 picker offers: every character and tag, plus the
   // stale values the loaded entries still reference (E6). Read from the
   // unsorted source, like the other dynamic option lists.
@@ -433,16 +454,57 @@ export const initEntryManager = ({
     dom,
   });
 
+  const filterFields = new Set([
+    'constant', 'vectorized', 'position', 'outletName', 'automationId', 'group',
+    'excludeRecursion', 'preventRecursion', 'delayUntilRecursion', 'characterFilter',
+  ]);
+  let committedChangeBatch;
+  registerEntryChangeHook((book, uid, entry, changedFields) => {
+    const row = dom.order.entries?.[book]?.[uid];
+    if (!row) return;
+    if (!committedChangeBatch || committedChangeBatch.tbody !== dom.order.tbody) {
+      const batch = { tbody: dom.order.tbody, needsSort: false, filter: null };
+      committedChangeBatch = batch;
+      queueMicrotask(() => {
+        if (committedChangeBatch === batch) committedChangeBatch = undefined;
+        if (dom.order.tbody !== batch.tbody) return;
+        if (batch.needsSort) applyEntryManagerSortToDom();
+        updateEntryManagerSelectAllButton();
+        dom.order.refreshSelectionCount?.();
+      });
+    }
+    if (!entry) {
+      dom.order.hydration?.remove(row);
+      row.stwidSelectionCounter?.remove(row);
+      row.remove();
+      delete dom.order.entries[book][uid];
+      updateEntryManagerSelectAllButton();
+      return;
+    }
+    if (changedFields) row.stwidRefreshFields?.(changedFields);
+    else row.stwidRefreshPending?.();
+    // Reuse the same complete filter predicate as initial rendering. Script
+    // filter state remains independent and is not rerun as a save side effect.
+    if (!changedFields || [...changedFields].some((field) => filterFields.has(field))) {
+      committedChangeBatch.filter ??= createEntryManagerRowFilter();
+      committedChangeBatch.filter(row, entry);
+    }
+    committedChangeBatch.needsSort ||= !changedFields || affectsEntrySort(changedFields, entryManagerState.sort);
+  });
+
   const applyEntryManagerSortToDom = () => {
     if (!dom.order.tbody) return;
     // R14b — rows are about to move; an in-cell dropdown is positioned against
     // the cell it belongs to, so it closes rather than following it.
     closeOpenCharacterFilterDropdown();
     const entries = getEntryManagerEntries(entryManagerState.book, true);
+    let previous = null;
     for (const entry of entries) {
       const row = dom.order.entries?.[entry.book]?.[entry.data.uid];
       if (row) {
-        dom.order.tbody.append(row);
+        const next = previous ? previous.nextSibling : dom.order.tbody.firstChild;
+        if (row !== next) dom.order.tbody.insertBefore(row, next);
+        previous = row;
       }
     }
     updateEntryManagerPreview(entries);
@@ -463,6 +525,7 @@ export const initEntryManager = ({
     for (const [key, visible] of Object.entries(entryManagerState.columns)) {
       root.classList.toggle(`stwid--hide-col-${key}`, !visible);
     }
+    void dom.order.hydration?.refreshColumns();
   };
 
   const {
@@ -520,14 +583,7 @@ export const initEntryManager = ({
     applyEntryManagerCharacterFilterValueFilterToRow(row, entryData);
   });
 
-  const focusWorldEntry = (book, uid) => {
-    const entryDom = cache?.[book]?.dom?.entry?.[uid]?.root;
-    if (!entryDom) return;
-    const listPanelApi = getListPanelApi();
-    listPanelApi.setBookCollapsed(book, false);
-    entryDom.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    entryDom.click();
-  };
+  const focusWorldEntry = (book, uid) => getListPanelApi().openEntry(book, uid);
 
   const { renderEntryManager } = initEntryManagerRenderer({
     createEntryManagerRowFilter,

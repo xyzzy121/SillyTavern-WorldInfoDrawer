@@ -31,6 +31,7 @@ import {
   buildCharacterFilterMenuShell,
   repopulateCharacterFilterOptionList,
   refreshCharacterFilterCell,
+  refreshCharacterFilterRowFilters,
   CHARACTER_FILTER_MENU_SEARCH_TEXTS,
   CHARACTER_FILTER_SEARCH_TEXT_DATASET_KEY,
 } from '../table/table.body.character-filter.js';
@@ -464,7 +465,7 @@ export function buildBulkCharacterFilterSection({
 
       const books = new Set();
       for (let i = 0; i < targets.length; i++) {
-        const { bookName, uid, entryData } = targets[i];
+        const { tr, bookName, uid, entryData } = targets[i];
         const next = computeBulkCharacterFilterValue({ entry: entryData, mode, selection });
         // An entry the mode does not actually change is left alone, and its book
         // is not marked for saving. Without this, a Remove that matches nothing
@@ -478,10 +479,14 @@ export function buildBulkCharacterFilterSection({
           mirrorEntryFieldsToOriginalData(cache[bookName], entryData, ['characterFilter']);
           // The cell owns its own rendering; ask it to re-read rather than reach
           // into its DOM from here.
-          refreshCharacterFilterCell(bookName, uid, entryData);
+          if (!refreshCharacterFilterCell(bookName, uid, entryData)) {
+            refreshCharacterFilterRowFilters(tr, entryData);
+          }
+          tr.stwidRefreshPending?.();
         }
-        await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
+        if ((i + 1) % BULK_APPLY_BATCH_SIZE === 0) await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
       }
+      dom.order.refreshSelectionCount?.();
 
       // R18 — the existing serializer, which reports and reloads its own failed
       // books (ticket 02); it does not throw.

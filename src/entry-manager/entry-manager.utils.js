@@ -71,6 +71,24 @@ const countDisplayNames = (characters) => {
   return counts;
 };
 
+// One snapshot per table render/sort, rather than scanning the host roster for
+// every row. Preserve first-match semantics for legacy duplicate avatar keys.
+export const createCharacterFilterIndex = (hostLists) => {
+  if (hostLists?.characterByKey && hostLists?.tagById) return hostLists;
+  const { characters, tags } = resolveHostLists(hostLists);
+  const characterByKey = new Map();
+  const tagById = new Map();
+  for (const character of characters) {
+    const key = toAvatarKey(character);
+    if (!characterByKey.has(key)) characterByKey.set(key, character);
+  }
+  for (const tag of tags) {
+    const key = String(tag?.id);
+    if (!tagById.has(key)) tagById.set(key, tag);
+  }
+  return { characters, tags, characterByKey, tagById, displayNameCounts: countDisplayNames(characters) };
+};
+
 /**
  * The friendly display name of a host record, falling back to its stored key —
  * one copy each for characters and tags, so the read-only cell and every pick
@@ -90,7 +108,7 @@ const resolveCharacterLabel = (character, avatarKey, displayNameCounts) => {
     : displayName;
 };
 
-const buildCharacterLine = (storedName, { characters, displayNameCounts, mode, icon }) => {
+const buildCharacterLine = (storedName, { characters, characterByKey, displayNameCounts, mode, icon }) => {
   const avatarKey = String(storedName);
   const line = { kind: 'character', icon, mode, value: avatarKey, label: avatarKey, stale: false };
 
@@ -100,7 +118,7 @@ const buildCharacterLine = (storedName, { characters, displayNameCounts, mode, i
     return line;
   }
 
-  const match = characters.find((character) => toAvatarKey(character) === avatarKey);
+  const match = characterByKey.get(avatarKey);
   if (!match) {
     line.stale = true;
     line.tooltip = `Stale value --- no character with the avatar key "${avatarKey}" exists any more. Nothing was changed.`;
@@ -112,7 +130,7 @@ const buildCharacterLine = (storedName, { characters, displayNameCounts, mode, i
   return line;
 };
 
-const buildTagLine = (storedTag, { tags, mode }) => {
+const buildTagLine = (storedTag, { tags, tagById, mode }) => {
   // R3b/E14 — tag IDs are strings; coerce first so a legacy numeric ID still resolves.
   const tagId = String(storedTag);
   const line = { kind: 'tag', icon: 'fa-tag', mode, value: tagId, label: tagId, stale: false };
@@ -122,7 +140,7 @@ const buildTagLine = (storedTag, { tags, mode }) => {
     return line;
   }
 
-  const match = tags.find((tag) => String(tag?.id) === tagId);
+  const match = tagById.get(tagId);
   if (!match) {
     line.stale = true;
     line.tooltip = `Stale value --- no tag with the ID "${tagId}" exists any more. Nothing was changed.`;
@@ -145,20 +163,19 @@ export const formatCharacterFilter = (entry, hostLists) => {
   const filter = entry?.characterFilter;
   if (!filter || typeof filter !== 'object' || Array.isArray(filter)) return [];
 
-  const { characters, tags } = resolveHostLists(hostLists);
+  const index = createCharacterFilterIndex(hostLists);
   const mode = filter.isExclude ? 'exclude' : 'include';
   const icon = filter.isExclude ? 'fa-user-slash' : 'fa-user-plus';
-  const displayNameCounts = countDisplayNames(characters);
   const lines = [];
 
   if (Array.isArray(filter.names)) {
     for (const storedName of filter.names) {
-      lines.push(buildCharacterLine(storedName, { characters, displayNameCounts, mode, icon }));
+      lines.push(buildCharacterLine(storedName, { ...index, mode, icon }));
     }
   }
   if (Array.isArray(filter.tags)) {
     for (const storedTag of filter.tags) {
-      lines.push(buildTagLine(storedTag, { tags, mode }));
+      lines.push(buildTagLine(storedTag, { ...index, mode }));
     }
   }
 

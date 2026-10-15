@@ -1,5 +1,7 @@
 import { applyMobileHeaderLayout, MOBILE_EDITOR_MEDIA_QUERY } from './editor-panel-mobile.js';
 import { splitKeywordsAndRegexes } from '../shared/st-host.js';
+import { closeOpenMultiselectDropdownMenus } from '../shared/multiselect-dropdown.js';
+import { beginEntryNavigation, cancelEntryNavigation, hasPendingEntryNavigation, preserveEntryNavigation } from '../shared/entry-navigation.js';
 
 const ACTIVE_STATE_CLASS = 'stwid--state-active';
 const FOCUS_CLASS = 'stwid--focus';
@@ -358,8 +360,15 @@ const createDirtyTracker = ({ dom }) => {
 
   const markEditorDirtyIfCurrent = (event) => {
     if (!currentEditorKey) return;
-    isEditorDirty = true;
     const control = event?.target?.closest?.(EDITOR_CONTROL_SELECTOR);
+    // A title/content save can finish while its textarea still has focus. Its
+    // later blur emits change without another host save; do not reopen a clean
+    // draft when both the control and model still match that acknowledged save.
+    if (event?.type === EDITOR_EVENT_CHANGE && !isEditorDirty && control
+      && cleanControlSnapshots.has(control)
+      && controlSnapshot(control) === cleanControlSnapshots.get(control)
+      && JSON.stringify(editorEntry) === cleanEntrySnapshot) return;
+    isEditorDirty = true;
     if (control) dirtyControls.add(control);
     else hasUnknownDirtyControl = true;
   };
@@ -427,6 +436,37 @@ const createEditorClearer = ({ dom, resetEditorOwnership }) => {
   };
 
   const clearEditor = ({ resetCurrent = true } = {}) => {
+    cancelEntryNavigation();
+    // Removing an ancestor does not trigger each popup's immediate-parent
+    // observer. Close owned menus before detaching their document listeners.
+    closeOpenMultiselectDropdownMenus(null, dom.editor);
+    dom.order?.hydration?.dispose();
+    dom.order?.cleanup?.();
+    dom.order?.filter?.cancel?.();
+    if (dom.order) {
+      // A single child node retains its detached parent and the complete table.
+      // Release every view-owned reference, while preserving the drawer toggle
+      // and renderer cleanup hook that are reused when the manager reopens.
+      dom.order.hydration = undefined;
+      dom.order.entries = {};
+      dom.order.tbody = undefined;
+      dom.order.selection = undefined;
+      dom.order.refreshSelectionCount = undefined;
+      dom.order.sortSelect = undefined;
+      dom.order.selectAll = undefined;
+      dom.order.start = undefined;
+      dom.order.step = undefined;
+      if (dom.order.direction) {
+        dom.order.direction.up = undefined;
+        dom.order.direction.down = undefined;
+      }
+      if (dom.order.uid) dom.order.uid.start = undefined;
+      if (dom.order.filter) {
+        dom.order.filter.root = undefined;
+        dom.order.filter.preview = undefined;
+        dom.order.filter.cancel = undefined;
+      }
+    }
     dom.editor.innerHTML = '';
     dom.editor.classList.remove(FOCUS_CLASS);
     if (resetCurrent) {
@@ -564,23 +604,25 @@ export const initEditorPanel = ({
     }
   };
 
-  const openEntryEditor = async ({ entry, entryDom: entryRowDom, name, isTokenCurrent }) => {
-    if (!prepareToOpenEntryEditor({ getSelectFrom, isTokenCurrent, selectEnd })) return;
-    closeCompetingPanels();
-    const header = await fetchEntryHeaderElement(renderTemplateAsync, isTokenCurrent);
-    if (!isTokenCurrent()) return;
+  const renderEntryEditor = async ({ entry, entryDom: entryRowDom, name, isTokenCurrent, navigation }) => {
+    if (getIsEditorDirty()) return false;
+    const isCurrent = () => navigation.isCurrent() && (isTokenCurrent?.() ?? true) && !getIsEditorDirty();
+    if (!prepareToOpenEntryEditor({ getSelectFrom, isTokenCurrent: isCurrent, selectEnd })) return false;
+    preserveEntryNavigation(closeCompetingPanels);
+    const header = await fetchEntryHeaderElement(renderTemplateAsync, isCurrent);
+    if (!isCurrent()) return false;
     const editor = await buildEntryEditDom({
       buildSavePayload,
       getWorldEntry,
-      isTokenCurrent,
+      isTokenCurrent: isCurrent,
       name,
       entry,
     });
-    if (!editor) return;
+    if (!editor || !isCurrent()) return false;
     const { entryEditorDom, payloadEntry } = editor;
     applyMobileHeaderLayout(entryEditorDom);
     appendFocusButton(entryEditorDom);
-    setActiveEntryDom(
+    preserveEntryNavigation(() => setActiveEntryDom(
       renderEntryEditorDom({
         appendUnfocusButton,
         clearEditor,
@@ -590,21 +632,33 @@ export const initEditorPanel = ({
         entryRowDom,
         header,
       }),
-    );
+    ));
     wireAmsDrawerSection(entryEditorDom);
     fixTextpoleHeights(entryEditorDom);
     setCurrentEditor({ name, uid: entry.uid });
     setMountedEditor(entryEditorDom, payloadEntry);
     markEditorClean(name, entry.uid);
 
-    // Track the open editor so a later viewport breakpoint change can re-apply or
-    // re-render the correct layout. Reusing the original isTokenCurrent keeps the
-    // re-render safe: if the user has since opened another entry, the token is stale
-    // and the re-open aborts on its own.
+    // A failed navigation can supersede this editor's old request token while
+    // leaving its DOM mounted. Layout reopening gets a fresh token only after
+    // explicit navigation settles, and only while this editor still owns the panel.
     currentEntryEditorDom = entryEditorDom;
-    reopenCurrentEditor = () =>
-      openEntryEditor({ entry, entryDom: entryRowDom, name, isTokenCurrent });
+    reopenCurrentEditor = () => {
+      if (hasPendingEntryNavigation() || currentEntryEditorDom !== entryEditorDom || !document.contains(entryEditorDom)) return;
+      return openEntryEditor({ entry, entryDom: entryRowDom, name, isTokenCurrent: () => currentEntryEditorDom === entryEditorDom });
+    };
     openEditorIsMobileLayout = editorLayoutMedia?.matches ?? false;
+    return true;
+  };
+
+  const openEntryEditor = async (options) => {
+    if (getIsEditorDirty()) return false;
+    const navigation = options.navigation ?? beginEntryNavigation();
+    try {
+      return await renderEntryEditor({ ...options, navigation });
+    } finally {
+      if (!options.navigation) navigation.finish();
+    }
   };
 
   const isDirty = (name, uid) => {
@@ -628,6 +682,7 @@ export const initEditorPanel = ({
   };
 
   const cleanupEditorPanel = () => {
+    cancelEntryNavigation();
     cleanup();
     setMountedEditor(null, null);
     editorLayoutMedia?.removeEventListener?.('change', handleEditorLayoutBreakpointChange);

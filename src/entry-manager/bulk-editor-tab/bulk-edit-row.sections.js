@@ -112,6 +112,8 @@ function syncActiveStateToggles({ tr, cache, bookName, uid, willDisable }) {
   if (rowToggle) {
     rowToggle.classList.toggle(TOGGLE_OFF_CLASS, willDisable);
     rowToggle.classList.toggle(TOGGLE_ON_CLASS, !willDisable);
+    const pressed = String(!willDisable);
+    if (rowToggle.getAttribute('aria-pressed') !== pressed) rowToggle.setAttribute('aria-pressed', pressed);
   }
 
   const listToggle = cache?.[bookName]?.dom?.entry?.[uid]?.isEnabled;
@@ -175,7 +177,8 @@ export async function applyBulkProbabilityToTargets({ targets, cache, parsed }) 
     const target = targets[i];
     books.add(target.bookName);
     applyBulkProbabilityToSingleTarget({ ...target, cache, parsed });
-    await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
+    target.tr.stwidRefreshPending?.();
+    if ((i + 1) % BULK_APPLY_BATCH_SIZE === 0) await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
   }
   return books;
 }
@@ -198,6 +201,12 @@ export function buildBulkSelectSection({
   selectionCountEl.textContent = 'Selected 0 out of 0 entries';
 
   const refreshSelectionCount = () => {
+    const selection = dom.order.selection;
+    if (selection?.tbody === dom.order.tbody) {
+      const { visible, visibleSelected } = selection.counter.snapshot();
+      selectionCountEl.textContent = `Selected ${visibleSelected} out of ${visible} entries`;
+      return;
+    }
     const rows = dom.order.tbody ? [...dom.order.tbody.children] : [];
     const visible = rows.filter(
       (tableRow) => !tableRow.classList.contains('stwid--state-filtered'),
@@ -206,6 +215,7 @@ export function buildBulkSelectSection({
     const selected = visible.filter((tableRow) => isEntryManagerRowSelected(tableRow)).length;
     selectionCountEl.textContent = `Selected ${selected} out of ${total} entries`;
   };
+  dom.order.refreshSelectionCount = refreshSelectionCount;
 
   const selectAll = document.createElement('div');
   dom.order.selectAll = selectAll;

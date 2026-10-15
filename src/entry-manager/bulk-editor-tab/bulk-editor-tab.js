@@ -33,6 +33,8 @@ const resetEntryManagerStateForRender = ({
   getEditorPanelApi,
 }) => {
   dom.order.filter.cancel?.();
+  dom.order.hydration?.dispose();
+  dom.order.hydration = undefined;
   entryManagerState.book = book;
 
   // R14b — the table is about to be rebuilt, so an open inline character/tag
@@ -355,6 +357,7 @@ const renderEntryManager = async ({
 
   entryManagerRootEl.append(entryManagerTabs, filterEl, orderTableWrapEl);
   dom.editor.append(entryManagerRootEl);
+  dom.order.hydration?.start(orderTableWrapEl);
 };
 
 const createEntryManagerRenderer = ({
@@ -429,6 +432,7 @@ const createEntryManagerRenderer = ({
   getEditorPanelApi,
 }) => {
   const cleanupBulkEditRowRef = { current: null };
+  dom.order.cleanup = () => resetBulkEditRow(cleanupBulkEditRowRef);
   let renderGeneration = 0;
 
   // E8/E8b — hooks the existing World Info update path (no new listener) so an

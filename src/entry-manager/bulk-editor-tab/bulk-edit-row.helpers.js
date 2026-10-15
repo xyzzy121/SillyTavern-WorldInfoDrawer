@@ -323,9 +323,14 @@ export async function runBulkTargetsApply({
     for (let i = 0; i < targets.length; i++) {
       const target = targets[i];
       books.add(target.bookName);
-      await applyToTarget(target, i);
-      await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
+      const result = applyToTarget(target, i);
+      // Await real async work only. Awaiting a synchronous callback would
+      // flush the host's mutation observer after every individual row.
+      if (result && typeof result.then === 'function') await result;
+      target.tr.stwidRefreshPending?.();
+      if ((i + 1) % BULK_APPLY_BATCH_SIZE === 0) await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
     }
+    entryManagerDom.order.refreshSelectionCount?.();
     // saveUpdatedBooks reports and reloads its own failures; it does not throw.
     const { failedBooks } = await saveUpdatedBooks(books, saveWorldInfo, buildSavePayload);
     // Leave the row marked dirty when a book did not save, so the user can retry.
@@ -393,8 +398,10 @@ export async function runBulkNumericFieldApply({
       mirrorEntryFieldsToOriginalData(cache[bookName], entryData, [entryField]);
       const rowInput = tr.querySelector(`[name="${rowInputName}"]`);
       if (rowInput) rowInput.value = String(value);
-      await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
+      tr.stwidRefreshPending?.();
+      if ((i + 1) % BULK_APPLY_BATCH_SIZE === 0) await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
     }
+    entryManagerDom.order.refreshSelectionCount?.();
     // saveUpdatedBooks reports and reloads its own failures; it does not throw.
     const { failedBooks } = await saveUpdatedBooks(books, saveWorldInfo, buildSavePayload);
     // Leave the row marked dirty when a book did not save, so the user can retry.

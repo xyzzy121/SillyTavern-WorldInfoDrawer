@@ -11,6 +11,8 @@ import {
   withApplyButtonLock,
 } from './bulk-edit-row.helpers.js';
 import { remapEntryUidsInOriginalData } from '../../shared/original-data.js';
+import { remapCharacterFilterCells } from '../table/table.body.character-filter.js';
+import { notifyEntryUidsRemapped } from '../../shared/wi-update-handler.js';
 
 const MAX_UID_INPUT = '100000';
 const UID_START_STORAGE_KEY = 'stwid--uid-start';
@@ -50,7 +52,7 @@ export function findUidCollisions(byBook, cache, startValue) {
 // Exported for tests only — the UID write path is the one place where a wrong
 // key silently destroys an entry, so it is covered directly. Callers inside the
 // extension still go through createRunApplyUid(), which refuses on collisions.
-export async function rebuildBookUids(byBook, cache, startValue) {
+export async function rebuildBookUids(byBook, cache, startValue, dom) {
   for (const [bookName, bookTargets] of byBook) {
     const selectedOldUids = new Set(bookTargets.map((target) => target.uid));
     const existingEntries = cache[bookName].entries;
@@ -64,16 +66,39 @@ export async function rebuildBookUids(byBook, cache, startValue) {
     // selected entry onto another selected entry's old uid, so the shadow copy
     // has to be repointed in one pass at the end, never entry by entry.
     const uidMap = new Map();
+    const stagedEntries = [];
     for (let i = 0; i < bookTargets.length; i++) {
       const { entryData } = bookTargets[i];
       const newUid = startValue + i;
       uidMap.set(entryData.uid, newUid);
+      stagedEntries.push([newUid, entryData]);
+      if ((i + 1) % BULK_APPLY_BATCH_SIZE === 0) await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
+    }
+    // Stage with yields, then publish identities atomically. A concurrent lazy
+    // browser render must never see old cache keys containing already-new UIDs.
+    for (const [newUid, entryData] of stagedEntries) {
       entryData.uid = newUid;
       freshEntries[String(newUid)] = entryData;
-      await maybeYieldToEventLoop(i, BULK_APPLY_BATCH_SIZE);
     }
     cache[bookName].entries = freshEntries;
     remapEntryUidsInOriginalData(cache[bookName], uidMap);
+    // Repoint all keys together: a selected UID can move onto another selected
+    // entry's former UID. Incremental delete-and-insert would lose that row.
+    const remapRows = (rows) => {
+      if (!rows) return;
+      const moved = [...uidMap].map(([oldUid, newUid]) => [newUid, rows[oldUid]]);
+      for (const oldUid of uidMap.keys()) delete rows[oldUid];
+      for (const [uid, row] of moved) {
+        if (!row) continue;
+        rows[uid] = row;
+        row.stwidRemapUid?.(uid);
+        row.root?.setAttribute?.('data-uid', uid);
+      }
+    };
+    remapRows(dom?.order?.entries?.[bookName]);
+    remapRows(cache[bookName].dom?.entry);
+    remapCharacterFilterCells(bookName, uidMap);
+    await notifyEntryUidsRemapped(bookName, uidMap);
   }
 }
 
@@ -114,7 +139,7 @@ function createRunApplyUid({
         return;
       }
 
-      await rebuildBookUids(byBook, cache, startValue);
+      await rebuildBookUids(byBook, cache, startValue, dom);
       const { failedBooks } = await saveUpdatedBooks(
         new Set(byBook.keys()),
         saveWorldInfo,

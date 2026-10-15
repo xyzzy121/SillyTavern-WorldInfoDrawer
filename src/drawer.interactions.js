@@ -163,6 +163,7 @@ export const installDrawerObservers = ({
   cache,
   getCurrentEditor,
   getEditorPanelApi,
+  getListPanelApi,
   restoreSplitterForCurrentLayout,
   wiHandlerApi,
   onSelectObserverReady,
@@ -199,9 +200,7 @@ export const installDrawerObservers = ({
       return;
     }
 
-    if (cache[currentEditor.name]?.dom?.entry?.[currentEditor.uid]?.root) {
-      cache[currentEditor.name].dom.entry[currentEditor.uid].root.click();
-    }
+    void getListPanelApi?.()?.openEntry?.(currentEditor.name, currentEditor.uid);
   });
   moDrawer.observe(drawerContent, { attributes: true, attributeFilter: DRAWER_STATE_ATTRIBUTES });
 

@@ -34,10 +34,12 @@ const createTabButton = ({ tab, onClick }) => {
   button.classList.add('stwid--icon-tab__button');
   button.dataset.tabId = tab.id;
   button.setAttribute('role', 'tab');
+  button.setAttribute('aria-label', tab.label);
   button.setAttribute('aria-selected', 'false');
   button.title = `${tab.label} tab`;
 
   const icon = document.createElement('i');
+  icon.setAttribute('aria-hidden', 'true');
   icon.classList.add('fa-solid', 'fa-fw', tab.icon);
   button.append(icon);
 
@@ -289,8 +291,10 @@ const createFilterBarSlice = ({
       applyTabHidden = null;
     },
     applyHiddenTabs,
-    refreshSearchFilter: () => searchControls?.refreshSearchFilter() ?? Promise.resolve(false),
+    refreshSearchFilter: (bookNames) => searchControls?.refreshSearchFilter(bookNames) ?? Promise.resolve(false),
     invalidateSearchFilter: () => searchControls?.invalidateSearchFilter(),
+    releaseSearchRows: (world) => searchControls?.releaseSearchRows(world),
+    registerSearchRows: (world) => searchControls?.registerSearchRows(world),
     getBookVisibilityScope: (...args) => visibilitySlice.getBookVisibilityScope(...args),
     setEntryManagerToggleVisibility: (enabled) => {
       runtime?.dom?.setOrderToggleVisible?.(Boolean(enabled));

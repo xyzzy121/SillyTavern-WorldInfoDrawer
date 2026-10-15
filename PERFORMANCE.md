@@ -1,5 +1,129 @@
 # Performance and responsiveness validation
 
+## October 2026: demand rendering and mobile responsiveness
+
+Collapsed books now retain their headers and cached data without constructing
+entry rows. Expanding a book creates its rows with cancellation checks and a work
+budget. Collapsing or hiding it releases rows unless an editor, selection, drag,
+or navigation request still needs them. Search operates on cached data, and
+entry updates invalidate only the affected search and sort work.
+
+The Entry Manager retains every logical table row. It creates editing controls
+only for enabled columns near the viewport, or immediately when a cell receives
+click or keyboard interaction. Automatic control creation pauses during scrolling
+and resumes after 120 ms of idle time. This avoids repeatedly laying out the
+entire table while the viewport moves. Control creation after scrolling is still
+work and is included separately in the measurements. A lightweight native drag
+handle remains available before the row's editing controls are created.
+
+Bulk edits skip unchanged preview text and attributes, yield after real batches,
+and use maintained selection counts. UID renumbering updates canonical identities
+for both mounted and deferred views. Closing a view releases its observer,
+pending work, scroll listener, dropdown listeners, and table references.
+Navigation ownership spans row loading and editor construction so an older
+request cannot replace a newer selection or reopen a cleared editor.
+
+On desktop, the table uses an opaque background with the theme tint's RGB
+channels. This gives Chromium a continuous painted surface for accelerated
+scrolling. A transparent table of deferred cells produced tens of thousands of
+fragmented touch/wheel regions under the host's document-level input handlers.
+In a 1,000-row diagnostic, the background reduced Layerize processing from about
+2.85 seconds to 8 milliseconds. The table is intentionally opaque even when the
+surrounding theme is translucent; this rule applies only above 1,000 px.
+
+The current comparison uses an isolated SillyTavern 1.19.0 staging checkout,
+Node 26.2.0, and Playwright 1.64.0. Its baseline is this repository's `cd761ee`
+checkout plus the completed mobile fixes, before the demand-rendering changes.
+The older measurements below use a different baseline and must not be pooled
+with this comparison.
+
+The six synthetic fixtures are 1,000 entries across ten books; 20,544 entries
+across 96 books with short or large content; and single-book managers with
+1,000 entries, 4,000 short entries, or 4,000 large entries. The largest library
+is approximately 150 MB of JSON. Browser profiles are mobile Chromium at
+390 × 844 with 4× CPU throttling, mobile WebKit at 390 × 844 at native speed,
+and desktop Chromium at 1440 × 1000 at native speed.
+
+The final comparison retains the twelve completed mobile fixture/profile cases
+and repeats all six desktop cases after the desktop-only background correction.
+The mobile measurements and 106-case functional matrix precede that last CSS
+addition. Every other production resource is byte-identical, and the added
+media query is inactive at all measured mobile widths. Separate source hashes
+and an exact CSS-delta check preserve that provenance; samples from different
+source revisions are not pooled within a profile.
+
+Core timings use one discarded warmup and seven repetitions. They include
+two animation frames after the operation. Cold loading includes in-memory JSON
+serialization and parsing, excluding disk/network latency. Search excludes its
+typing debounce. Supplemental interactions use a single measured sample and
+include first expansion, scrolling, filtering, sorting, and individual/bulk saves.
+The updated scrolling diagnostic also waits for the final viewport's deferred
+controls, so work moved until after scrolling is not omitted.
+
+Final measured examples below use mobile Chromium at 390 × 844 with 4× CPU
+throttling. Core timings and element counts are medians of seven repetitions.
+
+| Workload | Before | Updated |
+| --- | ---: | ---: |
+| Reopen a collapsed 20,544-entry library | 13,901.6 ms | 1,060.5 ms |
+| Search the collapsed 20,544-entry library | 16,643.6 ms | 26.1 ms |
+| Elements in the collapsed 20,544-entry drawer | 268,174 | 1,102 |
+| Open the 4,000-entry short-content manager | 30,670.1 ms | 8,264.8 ms |
+| Initial controls in the 4,000-entry manager | 80,061 | 197 |
+| Elements in the 4,000-entry manager | 360,428 | 108,887 |
+
+Final desktop Chromium manager-opening medians, also with seven repetitions:
+
+| Manager fixture | Before | Updated |
+| --- | ---: | ---: |
+| 1,000 short entries | 1,440.8 ms | 484.7 ms |
+| 4,000 short entries | 7,599.6 ms | 1,650.4 ms |
+| 4,000 large entries | 7,757.1 ms | 1,543.9 ms |
+
+All eighteen updated fixture/profile cases completed, including their planned
+supplemental interactions. No browser errors were recorded in the final desktop
+run. The complete before/after comparison contains 36 core cases with seven
+measured samples each.
+
+Supplemental interactions have only one sample each. In the same 4,000-entry
+manager, sorting took 719.1 ms versus 35,811.8 ms, and a bulk strategy edit took
+5,654.9 ms versus 9,017.0 ms. These figures are diagnostics, not seven-run medians.
+
+The deferred work has observable costs. Expanding the entire 4,000-entry book
+took 11,805.8 ms versus 3,502.5 ms; the corresponding cold library load fell from
+1,635.8 ms to 203.7 ms. This fixture therefore costs more to load and fully expand,
+even though collapsed loading and manager opening improve. The twelve-jump scroll
+sample took 2,341.1 ms versus 1,570.8 ms, followed by another 1,295.1 ms to settle
+and create controls in the final viewport. A warm repeat took about 764 ms.
+The baseline already created all controls before scrolling and has no separate
+warm-repeat measurement. Faster initial rendering does not eliminate this work.
+The desktop 4,000-entry short book also shows this first-expansion tradeoff:
+2,323.4 ms versus 630.1 ms in its single supplemental sample.
+
+The 4,000-entry short manager's Chromium lifecycle check opens and closes eight
+times, including warmup. After garbage collection, browser-wide DOM nodes were
+34,837 before and 34,842 after, with zero connected manager rows after closing.
+These counters include the host and cached fixture data; they demonstrate release
+of the large detached table, rather than an extension-only memory measurement.
+
+The baseline's two 4,000-entry WebKit bulk operations exceeded their 180-second
+watchdogs. Those failures were retained; their seven core opening/rebuild samples
+were collected separately. Missing supplemental values are not zero-duration
+results. Both updated bulk operations completed: about 4.56 seconds for short
+content and 5.09 seconds for large content, with one sample each. Browser emulation
+does not establish physical-device performance, and
+repetitive synthetic content can have different memory behavior from real books.
+
+Large managers still pay layout and paint costs for their complete logical table.
+Expanding a large book incurs row construction that was deferred from opening the
+drawer. The approximately 8 ms JavaScript work budget is not an upper bound on
+host code, browser layout, or total interaction time.
+
+Run the unit suite with the command below. The independently installed mobile
+suite and its 106-case matrix are described in [tests/mobile/README.md](tests/mobile/README.md).
+
+## Earlier performance baseline (version 2.3.3)
+
 The comparison baseline is commit `72af626df2cdbc3dd801740bb756fd4d4abcd28a`
 (extension version 2.3.3). Before editing, all 66 files in the prepared baseline
 snapshot matched the checkout by SHA-256.

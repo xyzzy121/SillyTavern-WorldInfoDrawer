@@ -51,8 +51,8 @@ export const createMultiselectDropdownCheckbox = (checked = false) => {
   };
 };
 
-export const closeOpenMultiselectDropdownMenus = (excludeMenu = null) => {
-  for (const menu of document.querySelectorAll(
+export const closeOpenMultiselectDropdownMenus = (excludeMenu = null, root = document) => {
+  for (const menu of root.querySelectorAll(
     `.stwid--multiselect-dropdown__menu.${CSS_STATE_ACTIVE}`,
   )) {
     if (menu === excludeMenu) continue;
@@ -66,7 +66,7 @@ export const closeOpenMultiselectDropdownMenus = (excludeMenu = null) => {
     trigger?.setAttribute(ARIA_EXPANDED_ATTR, 'false');
   }
 
-  for (const blocker of document.querySelectorAll('.stwid--blocker')) {
+  for (const blocker of root.querySelectorAll('.stwid--blocker')) {
     const menu = blocker.querySelector('.stwid--list-dropdown__menu');
     const closeMenu = menu?.[MULTISELECT_DROPDOWN_CLOSE_HANDLER];
     if (typeof closeMenu === 'function') {
@@ -710,7 +710,7 @@ export const wireMultiselectDropdown = (menu, menuButton, menuWrap, options = {}
 
   const removeDocumentListeners = () => {
     document.removeEventListener('click', handleOutsideClick, true);
-    document.removeEventListener('keydown', handleEscapeKey);
+    document.removeEventListener('keydown', handleEscapeKey, true);
   };
 
   const disconnectRemovalObserver = () => {
@@ -743,9 +743,16 @@ export const wireMultiselectDropdown = (menu, menuButton, menuWrap, options = {}
     closeMenu();
   };
   const handleEscapeKey = (event) => {
-    if (event.key === 'Escape') {
-      closeMenu();
+    if (!menuWrap.isConnected) {
+      teardown();
+      return;
     }
+    if (event.key !== 'Escape' || !menu.classList.contains(CSS_STATE_ACTIVE)) return;
+    // Consume the menu's dismissal before the host's document bubble handler
+    // also closes World Info and hides the trigger that should regain focus.
+    event.preventDefault();
+    event.stopPropagation();
+    closeMenu();
   };
   const closeMenu = () => {
     if (!menu.classList.contains(CSS_STATE_ACTIVE)) return;
@@ -776,7 +783,7 @@ export const wireMultiselectDropdown = (menu, menuButton, menuWrap, options = {}
     addRepositionListeners();
     observeMenuWrapRemoval();
     document.addEventListener('click', handleOutsideClick, true);
-    document.addEventListener('keydown', handleEscapeKey);
+    document.addEventListener('keydown', handleEscapeKey, true);
     keyboardNav.reset();
     keyboardNav.sync();
     if (searchInput && !isEmpty) searchInput.focus({ preventScroll: true });

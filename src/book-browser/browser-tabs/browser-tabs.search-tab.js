@@ -40,6 +40,7 @@ const applyBookBrowserSearchFilter = async ({
   filteredRowRoots,
   isCurrent,
   updateFolderActiveToggles,
+  bookNames = null,
 }) => {
   const checkpoint = createWorkBudget({ maxItems: 200, budgetMs: 8 });
   const books = Object.entries(runtime.cache);
@@ -50,6 +51,7 @@ const applyBookBrowserSearchFilter = async ({
   listPanelState.pruneEntrySearchCacheStaleBooks(books.map(([name]) => name));
 
   for (const [bookName, book] of books) {
+    if (bookNames && !bookNames.has(bookName)) continue;
     const entries = book.entries;
     const dom = book.dom;
     const entryDoms = dom?.entry;
@@ -63,6 +65,31 @@ const applyBookBrowserSearchFilter = async ({
     if (!isBookCurrent()) return false;
     const bookMatch = !query.length || bookName.toLowerCase().includes(query);
     let filteredRoots = filteredRowRoots.get(book);
+
+    // Collapsed books retain data, not row trees. A single matching entry is
+    // sufficient for visibility; expansion evaluates all rows when needed.
+    if (book.rowRender && book.rowRender.status !== 'mounted') {
+      filteredRowRoots.delete(book);
+      let match = bookMatch;
+      if (!match && shouldScanEntries) {
+        for (const entry of Object.values(entries ?? {})) {
+          if (getEntrySearchText(listPanelState, bookName, entry).includes(query)) {
+            match = true;
+            break;
+          }
+          const pending = checkpoint();
+          if (pending) {
+            await pending;
+            if (!isBookCurrent()) return false;
+          }
+        }
+      }
+      setQueryFiltered(root, !match);
+      const pending = checkpoint();
+      if (pending) await pending;
+      if (!isBookCurrent()) return false;
+      continue;
+    }
 
     if (shouldScanEntries && !bookMatch) {
       if (!filteredRoots) {
@@ -156,18 +183,24 @@ const buildSearchRow = (searchRow, listPanelState, runtime, updateFolderActiveTo
   let generation = 0;
   let timer = null;
   let disposed = false;
+  let completedSignature = null;
+  let running = false;
   const filteredRowRoots = new Map();
   const invalidateSearchFilter = () => {
     generation += 1;
     clearTimeout(timer);
     timer = null;
   };
-  const applySearchFilter = (runGeneration) => {
+  const applySearchFilter = async (runGeneration, bookNames = null) => {
     if (disposed || runGeneration !== generation) return Promise.resolve(false);
     const query = search.value.toLowerCase();
     const searchEntries = searchEntriesCheckbox.checked;
     const shouldScanEntries = searchEntries && query.length >= 2;
-    return applyBookBrowserSearchFilter({
+    const signature = `${searchEntries}:${query}`;
+    const scope = !running && completedSignature === signature && bookNames
+      ? new Set(bookNames) : null;
+    running = true;
+    const applied = await applyBookBrowserSearchFilter({
       runtime,
       listPanelState,
       query,
@@ -175,12 +208,18 @@ const buildSearchRow = (searchRow, listPanelState, runtime, updateFolderActiveTo
       filteredRowRoots,
       isCurrent: () => !disposed && runGeneration === generation,
       updateFolderActiveToggles,
+      bookNames: scope,
     });
+    if (runGeneration === generation) {
+      running = false;
+      completedSignature = applied ? signature : null;
+    }
+    return applied;
   };
 
-  const refreshSearchFilter = () => {
+  const refreshSearchFilter = (bookNames = null) => {
     invalidateSearchFilter();
-    return applySearchFilter(generation);
+    return applySearchFilter(generation, bookNames);
   };
   const queueSearchFilter = () => {
     // Cancel a yielding search now, rather than letting it paint an old query
@@ -218,7 +257,14 @@ const buildSearchRow = (searchRow, listPanelState, runtime, updateFolderActiveTo
     searchEntriesCheckbox.removeEventListener('click', queueSearchFilter);
   };
 
-  return { search, searchEntriesCheckbox, refreshSearchFilter, invalidateSearchFilter, cleanup };
+  const releaseSearchRows = (world) => filteredRowRoots.delete(world);
+  const registerSearchRows = (world) => {
+    const roots = new Set(Object.values(world.dom.entry)
+      .map((entry) => entry.root).filter((root) => root.classList.contains(FILTER_QUERY_CLASS)));
+    if (roots.size) filteredRowRoots.set(world, roots);
+    else filteredRowRoots.delete(world);
+  };
+  return { search, searchEntriesCheckbox, refreshSearchFilter, invalidateSearchFilter, releaseSearchRows, registerSearchRows, cleanup };
 };
 
 export const createSearchRow = (listPanelState, runtime, updateFolderActiveToggles) => {
