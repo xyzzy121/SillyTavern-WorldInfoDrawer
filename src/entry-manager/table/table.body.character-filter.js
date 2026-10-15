@@ -96,7 +96,7 @@ export const registerCharacterFilterRowFilterHook = (applyToRow) => {
   applyCharacterFilterRowFilters = typeof applyToRow === 'function' ? applyToRow : null;
 };
 
-const refreshCharacterFilterRowFilters = (element, entryData) => {
+export const refreshCharacterFilterRowFilters = (element, entryData) => {
   if (!applyCharacterFilterRowFilters) return;
   const row = element?.closest?.('tr');
   if (row) applyCharacterFilterRowFilters(row, entryData);
@@ -113,6 +113,17 @@ export const closeOpenCharacterFilterDropdown = () => {
 export const resetCharacterFilterCells = () => {
   closeOpenCharacterFilterDropdown();
   characterFilterCells.clear();
+};
+
+export const remapCharacterFilterCells = (book, uidMap) => {
+  const moved = [];
+  for (const [oldUid, newUid] of uidMap) {
+    const key = cellKey(book, oldUid);
+    const cell = characterFilterCells.get(key);
+    if (cell) { cell.close(); moved.push([cellKey(book, newUid), cell]); }
+    characterFilterCells.delete(key);
+  }
+  for (const [key, cell] of moved) characterFilterCells.set(key, cell);
 };
 
 /**
@@ -220,10 +231,10 @@ function buildCharacterFilterPlaceholder() {
   return row;
 }
 
-function renderCharacterFilterCell(optionsWrap, entryData) {
+function renderCharacterFilterCell(optionsWrap, entryData, characterFilterIndex) {
   optionsWrap.textContent = '';
   optionsWrap.classList.remove(CHARACTER_FILTER_COLLAPSED_CLASS);
-  const lines = formatCharacterFilter(entryData);
+  const lines = formatCharacterFilter(entryData, characterFilterIndex);
   if (!lines.length) {
     optionsWrap.append(buildCharacterFilterPlaceholder());
     return;
@@ -377,7 +388,7 @@ export function buildCharacterFilterMenuShell({ excludeTooltip = EXCLUDE_TOOLTIP
  * @returns {{td: HTMLTableCellElement, cellWrap: HTMLDivElement,
  *   trigger: HTMLDivElement, getEntryData: Function, renderCell: Function}}
  */
-function buildCharacterFilterTrigger({ entryRow, cache }) {
+function buildCharacterFilterTrigger({ entryRow, cache, characterFilterIndex }) {
   const td = document.createElement('td');
   td.setAttribute('data-col', 'characterFilter');
 
@@ -394,7 +405,7 @@ function buildCharacterFilterTrigger({ entryRow, cache }) {
   setTooltip(trigger, TRIGGER_TOOLTIP);
 
   const getEntryData = () => cache[entryRow.book]?.entries?.[entryRow.data.uid] ?? entryRow.data;
-  const renderCell = (entryData = getEntryData()) => renderCharacterFilterCell(trigger, entryData);
+  const renderCell = (entryData = getEntryData()) => renderCharacterFilterCell(trigger, entryData, characterFilterIndex);
   renderCell(entryRow.data);
 
   return { td, cellWrap, trigger, getEntryData, renderCell };
@@ -519,10 +530,11 @@ function wireCharacterFilterCellDropdown({
   return closeMenu;
 }
 
-export function buildCharacterFilterCell({ entryRow, cache, enqueueSave }) {
+export function buildCharacterFilterCell({ entryRow, cache, enqueueSave, characterFilterIndex }) {
   const { td, cellWrap, trigger, getEntryData, renderCell } = buildCharacterFilterTrigger({
     entryRow,
     cache,
+    characterFilterIndex,
   });
 
   const { menu, header, list, heading, excludeInput } = buildCharacterFilterMenuShell();

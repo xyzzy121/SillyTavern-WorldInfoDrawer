@@ -155,7 +155,8 @@ export function setupEntryManagerSorting({
     }
   };
 
-  $(tbody).sortable({
+  const sortable = $(tbody);
+  sortable.sortable({
     delay: getSortableDelay(),
     handle: '.stwid--sortable-handle',
     update: async () => {
@@ -163,5 +164,8 @@ export function setupEntryManagerSorting({
     },
   });
 
-  return { getVisibleEntryManagerRows, updateCustomOrderFromDom };
+  const disposeSorting = () => {
+    if (sortable.sortable('instance')) sortable.sortable('destroy');
+  };
+  return { getVisibleEntryManagerRows, updateCustomOrderFromDom, disposeSorting };
 }

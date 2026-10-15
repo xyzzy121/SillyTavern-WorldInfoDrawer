@@ -29,6 +29,7 @@ const createSelectionStateHelpers = ({ listPanelState, runtime }) => {
         selectedEntry.classList.remove(DROP_TARGET_CLASS);
       },
     );
+    void runtime.updateEntryDemand?.();
   };
 
   const selectAdd = (entry) => {
@@ -309,6 +310,7 @@ const updateBookDropTargetState = (targetBookRow, shouldHighlight) => {
 
 const createBookDropHandlers = ({
   listPanelState,
+  runtime,
   handleDraggedBookMoveOrCopy,
   moveOrCopySelectedEntriesToBook,
 }) => {
@@ -339,6 +341,7 @@ const createBookDropHandlers = ({
       updateBookDropTargetState(targetBookRow, false);
       const draggedName = listPanelState.dragBookName;
       listPanelState.dragBookName = null;
+      void runtime.updateEntryDemand?.();
       const targetFolder = getTargetFolder?.() ?? null;
       await handleDraggedBookMoveOrCopy(draggedName, targetFolder, evt.ctrlKey);
       return;
@@ -357,6 +360,7 @@ const createBookDropHandlers = ({
     if (!listPanelState.dragBookName) return;
     const draggedName = listPanelState.dragBookName;
     listPanelState.dragBookName = null;
+    void runtime.updateEntryDemand?.();
     await handleDraggedBookMoveOrCopy(draggedName, folderName, evt.ctrlKey);
   };
 
@@ -372,6 +376,7 @@ const createBookDropHandlers = ({
     evt.preventDefault();
     const draggedName = listPanelState.dragBookName;
     listPanelState.dragBookName = null;
+    void runtime.updateEntryDemand?.();
     await handleDraggedBookMoveOrCopy(draggedName, null, evt.ctrlKey, { skipIfSameFolder: false });
   };
 
@@ -407,6 +412,7 @@ const createSelectionDnDSlice = ({ listPanelState, runtime, handleDraggedBookMov
     onRootDropTargetDragOver,
     onRootDropTargetDrop,
   } = createBookDropHandlers({
+    runtime,
     handleDraggedBookMoveOrCopy,
     listPanelState,
     moveOrCopySelectedEntriesToBook,

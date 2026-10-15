@@ -120,7 +120,7 @@ test('initial filters are fused, respect every predicate, and leave scripts inde
   const passing = new Element('tr');
   apply(passing, baseline);
   assert.equal(passing.classList.contains('stwid--state-filtered'), false);
-  assert.equal(passing.classUpdates, 1);
+  assert.equal(passing.classUpdates, 0, 'An already-visible row must not emit a redundant class mutation');
   for (const [key, changes] of mutations) {
     const row = new Element('tr');
     apply(row, { ...baseline, ...changes });
@@ -398,6 +398,10 @@ test('row construction filters within each budget and stops at the first obsolet
     },
     './table.body.row-sorting.js': { setupEntryManagerSorting: () => ({}) },
     './table.body.cells.js': { buildEntryManagerRow: () => new Element('tr') },
+    './table.hydration.js': { createTableHydration: () => ({ start() {}, dispose() {} }) },
+    '../entry-manager.utils.js': { createCharacterFilterIndex: () => ({}) },
+    './table.body.character-filter.js': { resetCharacterFilterCells() {} },
+    './table.selection.js': { createSelectionCounter: () => ({}) },
   }, {
     document: {
       createElement: (tag) => new Element(tag),

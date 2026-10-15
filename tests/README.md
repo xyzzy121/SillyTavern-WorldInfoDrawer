@@ -25,10 +25,19 @@ suite covers:
 | `save-recovery.test.mjs` | Serialized saves and latest pending payloads, network rejection and recovery, host-cache invalidation before reads, missing/invalid books, intact metadata/extras, sequential reconciliation, one awaited table refresh, and explicit recovery failure reporting. |
 | `editor-dirty.test.mjs` | Equivalent numeric/string UIDs, dirty UID zero, matching mounted model and live draft, asynchronous title/keyword input, reverted drafts, Select2 drafts, standard host controls and aliases, and ownership/listener cleanup. |
 | `wi-reconciliation.test.mjs` | Stale reads and duplicate insertion, current insertion anchors, replacement book/entries/DOM guards, atomic field reconciliation before optimistic edits, dirty-editor preservation, post-commit acknowledgement, and superseded batches waiting for an authoritative refresh. |
+| `entry-navigation.test.mjs` | Cross-book request ordering, direct-click supersession, Back/clear cancellation, and same-book navigation-pin ownership. |
+| `manager-hydration.test.mjs` | Deferred cell values and controls, immediate pointer/keyboard activation, scrolling debounce, observer replacement/cleanup, bulk targets, UID remapping, selection counters, unchanged preview nodes, and real batch yields. |
+| `multiselect-escape.test.mjs` | Capture-phase Escape handling, focus restoration, and releasing dropdown listeners when the owning editor closes. |
 
 These tests use synthetic data and host adapters; they do not require a running
 SillyTavern server. Browser validation and measurements are documented in
 [PERFORMANCE.md](../PERFORMANCE.md).
+
+The separate [mobile browser suite](mobile/README.md) runs against an isolated
+SillyTavern profile. It uses Playwright dependencies installed under `tests/mobile`;
+they are not extension runtime dependencies. Its synthetic fixtures cover seven
+viewport sizes in Chromium and WebKit, plus deferred rendering, navigation,
+selection, bulk edits, cleanup, and first pointer/keyboard interaction.
 
 ## Bulk folder assignment validation — 2026-09-12
 

@@ -1,6 +1,6 @@
 import { initBookSourceLinks } from './src/book-browser/book-list/book-list.book-source-links.js';
 import { initDrawer } from './src/drawer.js';
-import { refreshList, waitForListRefreshIdle, refreshSearchFilter, invalidateSearchFilter } from './src/book-browser/book-browser.js';
+import { refreshList, waitForListRefreshIdle, refreshSearchFilter, invalidateSearchFilter, remapEntryUids } from './src/book-browser/book-browser.js';
 import { entryState, renderEntry } from './src/book-browser/book-list/book-list.world-entry.js';
 import { initWIUpdateHandler, registerUiRefreshHooks } from './src/shared/wi-update-handler.js';
 import { Settings } from './src/shared/settings.js';
@@ -57,6 +57,13 @@ let lastAppliedFolderGroupingVisibility = null;
 
 const setCurrentEditor = (value) => {
   currentEditor = value;
+  // Clearing a removed editor can happen inside atomic reconciliation. Wait
+  // until that task commits before releasing its book's row references.
+  setTimeout(() => {
+    void listPanelApi?.updateEntryDemand?.().catch((error) => {
+      console.warn('[STWID] Failed to update entry rendering after navigation.', error);
+    });
+  }, 0);
 };
 
 const deactivateToggle = (toggleButton) => {
@@ -127,7 +134,7 @@ const bookSourceLinksApi = initBookSourceLinks({
 // Must run before initWIUpdateHandler() so the handler's UI hooks are never
 // called before they exist — no WORLDINFO_UPDATED event can reach it earlier,
 // since event listeners are only registered inside initWIUpdateHandler below.
-registerUiRefreshHooks({ refreshList, renderEntry, entryState, waitForListRefreshIdle, refreshSearchFilter, invalidateSearchFilter });
+registerUiRefreshHooks({ refreshList, renderEntry, entryState, waitForListRefreshIdle, refreshSearchFilter, invalidateSearchFilter, remapEntryUids });
 
 const wiHandlerApi = initWIUpdateHandler({
   cache,
@@ -264,8 +271,7 @@ void refreshList()
   });
 
 export const jumpToEntry = async (name, uid) => {
-  const entryDom = cache[name]?.dom?.entry?.[uid]?.root;
-  if (!entryDom) return false;
+  if (uid === null || uid === undefined || !cache[name]?.entries?.[uid]) return false;
 
   if (currentEditor && editorPanelApi?.isDirty?.(currentEditor.name, currentEditor.uid)) {
     return false;
@@ -275,10 +281,5 @@ export const jumpToEntry = async (name, uid) => {
   deactivateToggle(activationToggle);
   const orderToggle = drawerApi.getOrderToggle();
   deactivateToggle(orderToggle);
-  listPanelApi.setBookCollapsed(name, false);
-  entryDom.scrollIntoView({ block: 'center', inline: 'center' });
-  if (currentEditor?.name !== name || String(currentEditor?.uid) !== String(uid)) {
-    entryDom.click();
-  }
-  return true;
+  return listPanelApi.openEntry(name, uid);
 };

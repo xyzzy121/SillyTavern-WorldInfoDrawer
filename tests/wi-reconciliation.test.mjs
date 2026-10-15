@@ -165,6 +165,40 @@ test('unchanged and externally changed entries both preserve a dirty editor', as
   assert.equal(cache.A.entries[0].comment, 'external');
 });
 
+test('updates to unmounted books reconcile all data without creating rows', async () => {
+  const handler = await makeHandler({ hooks: { renderEntry: () => assert.fail('unmounted book must not create rows') } });
+  const book = makeBook();
+  book.dom.entry = {};
+  book.rowRender = { status: 'unmounted', revision: 0 };
+  const cache = { A: book };
+  const entries = {
+    0: { uid: 0, comment: 'changed', key: ['new'], disable: true, constant: true, vectorized: false },
+    1: { uid: 1, comment: 'added', key: [] },
+  };
+  const changes = [];
+  handler.registerEntryChangeHook((name, uid, entry) => changes.push([name, uid, entry]));
+  assert.equal(await handler.syncBookEntriesAndDom(syncOptions(cache, { entries })), true);
+  assert.deepEqual(structuredClone(cache.A.entries), entries);
+  assert.equal(Object.keys(cache.A.dom.entry).length, 0);
+  assert.equal(book.searchChanged, true);
+  assert.equal(changes.length, 2);
+  assert.equal(changes[0][2], cache.A.entries[changes[0][1]], 'view hooks receive committed data');
+});
+
+test('content-only updates skip title sorting and search but still affect length sort', async () => {
+  const { syncBookEntriesAndDom, affectsEntrySort } = await makeHandler();
+  const cache = { A: makeBook() };
+  const options = syncOptions(cache, { entries: { 0: { ...cache.A.entries[0], content: 'new words' } } });
+  options.listPanelApi.getBookSortChoice = () => ({ sort: 'title' });
+  options.listPanelApi.sortEntriesIfNeeded = () => assert.fail('content does not affect title order');
+  await syncBookEntriesAndDom(options);
+  assert.equal(cache.A.searchChanged, false);
+  assert.equal(affectsEntrySort(new Set(['content']), 'length'), true);
+  assert.equal(affectsEntrySort(new Set(['comment']), 'uid'), true, 'fallback title participates in every sort');
+  assert.equal(affectsEntrySort(new Set(['order']), 'prompt'), true);
+  assert.equal(affectsEntrySort(new Set(['extensions']), 'custom'), true);
+});
+
 test('successful reconciliation offers exactly one matching open-entry acknowledgement after commit', async () => {
   const { syncBookEntriesAndDom } = await makeHandler();
   const cache = { A: makeBook() };

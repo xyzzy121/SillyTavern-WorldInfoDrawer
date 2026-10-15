@@ -177,20 +177,22 @@ const makeBooksView = async ({ load = () => ({}), checkpoint = () => null } = {}
     getSortFromMetadata: () => null,
     sortEntries: (entries) => entries,
     safeToSorted: (values, compare) => [...values].sort(compare),
-    renderEntry(entry, name) {
+    renderEntry(entry, name, before, options = {}) {
+      const world = options.world ?? runtime.cache[name];
       const row = new Element();
       row.dataset.uid = String(entry.uid);
-      runtime.cache[name].dom.entry[entry.uid] = { root: row };
-      runtime.cache[name].dom.entryList.append(row);
+      world.dom.entry[entry.uid] = { root: row };
+      world.dom.entryList.append(row);
     },
+  };
+  const listState = {
+    getCollapseState: (name) => collapsed.get(name),
+    pruneCollapseStatesStaleBooks() {},
+    pruneFolderCollapseStatesStaleFolders: () => 0,
   };
   const slice = module.namespace.createBooksViewSlice({
     runtime,
-    listPanelState: {
-      getCollapseState: (name) => collapsed.get(name),
-      pruneCollapseStatesStaleBooks() {},
-      pruneFolderCollapseStatesStaleFolders: () => 0,
-    },
+    listPanelState: listState,
     coreUiSelectors: {},
     foldersViewSlice: { resetFolderDoms() {}, updateCollapseAllFoldersToggle() {} },
     selectionDnDSlice: () => null,
@@ -210,7 +212,7 @@ const makeBooksView = async ({ load = () => ({}), checkpoint = () => null } = {}
       if (updateToggle) aggregateUpdates += 1;
     },
   });
-  return { slice, runtime, collapsed, getAggregateUpdates: () => aggregateUpdates };
+  return { slice, runtime, collapsed, listState, getAggregateUpdates: () => aggregateUpdates };
 };
 
 test('full list renders in sorted order, retains expansion, and batches collapse summary', async () => {
@@ -237,17 +239,80 @@ test('teardown while host reads are pending cannot populate cache or DOM', async
   assert.equal(runtime.dom.books.children.length, 0);
 });
 
-test('a render superseded during a yield preserves and replaces the last committed row once', async () => {
+test('collapsed books have no rows; expansion shares its builder and collapse releases references', async () => {
   const pause = deferred();
   let checkpoints = 0;
   const { slice, runtime } = await makeBooksView({ checkpoint: () => ++checkpoints === 1 ? pause.promise : null });
-  const original = await slice.renderBook('A', null, { entries: {} });
-  const stale = slice.renderBook('A', null, { entries: { 0: { uid: 0 } } });
+  await slice.renderBook('A', null, { entries: { 0: { uid: 0 }, 1: { uid: 1 } } });
+  const book = runtime.cache.A;
+  assert.equal(Object.keys(book.dom.entry).length, 0);
+  book.dom.entryList.classList.remove('stwid--state-collapsed');
+  const first = slice.ensureBookRows('A');
+  assert.equal(slice.ensureBookRows('A'), first, 'one in-flight builder per book');
+  await turn();
+  assert.equal(Object.keys(book.dom.entry).length, 0, 'staged rows stay private');
+  pause.resolve();
+  assert.equal(await first, true);
+  assert.equal(book.dom.entryList.children.length, 2);
+  book.dom.entryList.classList.add('stwid--state-collapsed');
+  await slice.updateEntryDemand();
+  assert.equal(book.dom.entryList.children.length, 0);
+  assert.equal(Object.keys(book.dom.entry).length, 0);
+});
+
+test('collapse cancels a yielded expansion and a later expansion uses current data', async () => {
+  const pause = deferred();
+  let checkpoints = 0;
+  const { slice, runtime } = await makeBooksView({ checkpoint: () => ++checkpoints === 1 ? pause.promise : null });
+  await slice.renderBook('A', null, { entries: { 0: { uid: 0 } } });
+  const book = runtime.cache.A;
+  book.dom.entryList.classList.remove('stwid--state-collapsed');
+  const stale = slice.ensureBookRows('A');
+  await turn();
+  book.dom.entryList.classList.add('stwid--state-collapsed');
+  await slice.updateEntryDemand();
+  book.entries = { 9: { uid: 9 } };
+  pause.resolve();
+  assert.equal(await stale, false);
+  assert.equal(book.dom.entryList.children.length, 0);
+  book.dom.entryList.classList.remove('stwid--state-collapsed');
+  assert.equal(await slice.ensureBookRows('A'), true);
+  assert.deepEqual(Object.keys(book.dom.entry), ['9']);
+});
+
+test('selection and editor pins retain collapsed rows until the interaction ends', async () => {
+  const { slice, runtime, listState } = await makeBooksView();
+  await slice.renderBook('A', null, { entries: { 0: { uid: 0 } } });
+  listState.selectFrom = 'A';
+  listState.selectList = ['0'];
+  await slice.updateEntryDemand();
+  const root = runtime.cache.A.dom.entry[0].root;
+  assert.ok(root.isConnected);
+  listState.selectList = [];
+  runtime.getCurrentEditor = () => ({ name: 'A', uid: 0 });
+  await slice.updateEntryDemand();
+  assert.equal(runtime.cache.A.dom.entry[0].root, root);
+  runtime.getCurrentEditor = () => null;
+  runtime.dom.books.stwidDragEntryBook = 'A';
+  await slice.updateEntryDemand();
+  assert.equal(root.isConnected, true, 'native drag retains rows even after selection ends');
+  runtime.dom.books.stwidDragEntryBook = null;
+  await slice.updateEntryDemand();
+  assert.equal(root.isConnected, false);
+  assert.equal(Object.keys(runtime.cache.A.dom.entry).length, 0);
+});
+
+test('an expansion superseded during a yield cannot publish stale rows into a replacement book', async () => {
+  const pause = deferred();
+  let checkpoints = 0;
+  const { slice, runtime } = await makeBooksView({ checkpoint: () => ++checkpoints === 1 ? pause.promise : null });
+  const original = await slice.renderBook('A', null, { entries: { 0: { uid: 0 } } });
+  const stale = slice.ensureBookRows('A', { force: true });
   await turn();
   assert.equal(original.isConnected, true);
   const latest = await slice.renderBook('A', null, { entries: {} });
   pause.resolve();
-  assert.equal(await stale, null);
+  assert.equal(await stale, false);
   assert.deepEqual(runtime.dom.books.children, [latest]);
   assert.equal(original.isConnected, false);
 });
@@ -262,6 +327,7 @@ test('refresh worker coalesces startup calls and replaces obsolete work with one
   const module = new vm.SourceTextModule(source, { context });
   const valuesByFile = {
     'sort-helpers.js': { cloneMetadata: structuredClone },
+    'entry-navigation.js': { beginEntryNavigation: () => ({ isCurrent: () => true }) },
     'book-folders.lorebook-folders.js': Object.fromEntries(['getFolderFromMetadata', 'getFolderRegistry', 'registerFolderName', 'sanitizeFolderMetadata', 'setFolderInMetadata'].map((key) => [key, noop])),
     'book-folders.folder-actions.js': { createBookInFolder: noop, setFolderBooksActive: noop },
     'book-folders.add-lorebooks.js': { closeAddLorebooksDialog: noop },
@@ -273,6 +339,7 @@ test('refresh worker coalesces startup calls and replaces obsolete work with one
       hydrateFolderCollapseStates: noop,
       persistFolderCollapseStates: noop,
       resetBookVisibilityState: noop,
+      setFolderCollapsedAndPersist: noop,
     },
     'book-browser.core-bridge.js': { CORE_UI_ACTION_SELECTORS: {}, clickCoreUiAction: noop, setSelectedBookInCoreUi: noop },
     'browser-tabs.js': {

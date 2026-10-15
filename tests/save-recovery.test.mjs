@@ -31,6 +31,10 @@ async function serializerHarness() {
     '../../shared/utils.js': { createWorkBudget() { assert.fail('Saving must not build rows'); } },
     './table.body.row-sorting.js': { setupEntryManagerSorting() {} },
     './table.body.cells.js': { buildEntryManagerRow() {} },
+    './table.hydration.js': { createTableHydration: () => ({ start() {}, dispose() {} }) },
+    '../entry-manager.utils.js': { createCharacterFilterIndex: () => ({}) },
+    './table.body.character-filter.js': { resetCharacterFilterCells() {} },
+    './table.selection.js': { createSelectionCounter: () => ({}) },
   }, {
     console: { error: (...args) => errors.push(args) },
     toastr: { error: (message) => toasts.push(message) },

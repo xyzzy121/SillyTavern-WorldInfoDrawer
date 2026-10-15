@@ -45,6 +45,7 @@ const createFoldersViewSlice = ({ listPanelState, runtime, selectionDnDSlice }) 
       persistFolderCollapseStates();
     }
     updateCollapseAllFoldersToggle();
+    void runtime.updateEntryDemand?.();
   };
 
   const createFolderDomForList = (folderName) => {
@@ -58,6 +59,7 @@ const createFoldersViewSlice = ({ listPanelState, runtime, selectionDnDSlice }) 
         const isCollapsed = !books.classList.contains(FOLDER_COLLAPSED_CLASS);
         setFolderCollapsedAndPersist(folderName, isCollapsed);
         updateCollapseAllFoldersToggle();
+        void runtime.updateEntryDemand?.();
       },
       onDragStateChange: (isOver) => selectionDnDSlice()?.onFolderDropTargetDragStateChange(isOver),
       onDrop: async (evt) => selectionDnDSlice()?.onFolderDropTargetDrop(evt, folderName),

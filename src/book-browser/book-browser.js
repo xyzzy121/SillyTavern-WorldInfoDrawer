@@ -1,4 +1,5 @@
 import { cloneMetadata } from '../shared/sort-helpers.js';
+import { beginEntryNavigation } from '../shared/entry-navigation.js';
 import {
   getFolderFromMetadata,
   getFolderRegistry,
@@ -19,6 +20,7 @@ import {
   listPanelState,
   persistFolderCollapseStates,
   resetBookVisibilityState,
+  setFolderCollapsedAndPersist,
 } from './book-browser.state.js';
 import {
   CORE_UI_ACTION_SELECTORS,
@@ -128,6 +130,55 @@ const setBookCollapsed = (name, isCollapsed, { updateToggle = true } = {}) => {
   listPanelState.setCollapseState(name, isCollapsed);
   applyCollapseState(name);
   if (updateToggle) updateCollapseAllToggle();
+  void booksViewSlice?.updateEntryDemand?.().catch(reportRowRenderError);
+};
+
+const reportRowRenderError = (error) => console.warn('[STWID] Failed to render book entries.', error);
+const updateEntryDemand = () => booksViewSlice?.updateEntryDemand?.() ?? Promise.resolve();
+const ensureEntryVisible = async (name, uid) => {
+  if (uid === null || uid === undefined || !state.cache[name]?.entries?.[uid]) return null;
+  const folderName = getFolderFromMetadata(state.cache[name].metadata);
+  if (folderName) setFolderCollapsedAndPersist(folderName, false, { transientExpand: true });
+  setBookCollapsed(name, false);
+  // Force permits navigation to an entry excluded by the current search.
+  if (!await booksViewSlice?.ensureBookRows(name, { force: true })) return null;
+  return state.cache[name]?.dom?.entry?.[uid]?.root ?? null;
+};
+const openEntry = async (name, uid) => {
+  if (state.isDirtyCheck?.()) return false;
+  const navigation = beginEntryNavigation();
+  state.navigationBooks.set(name, navigation);
+  try {
+    const row = await ensureEntryVisible(name, uid);
+    if (!row || !navigation.isCurrent() || state.isDirtyCheck?.()) return false;
+    row.scrollIntoView?.({ block: 'center', inline: 'center' });
+    if (row.stwidOpenEntry) return await row.stwidOpenEntry(navigation) !== false && navigation.isCurrent();
+    row.click();
+    return navigation.isCurrent();
+  } finally {
+    navigation.finish();
+    if (state.navigationBooks.get(name) === navigation) state.navigationBooks.delete(name);
+    void updateEntryDemand().catch(reportRowRenderError);
+  }
+};
+
+// Bulk UID renumbering preserves entry objects and row identities. Update the
+// selection's string keys in one pass after the caller commits the new maps.
+const remapEntryUids = async (name, uidMap) => {
+  const world = state.cache[name];
+  if (!world) return;
+  const mapped = new Map([...uidMap].map(([oldUid, newUid]) => [String(oldUid), String(newUid)]));
+  if (listPanelState.selectFrom === name && listPanelState.selectList) {
+    listPanelState.selectList = listPanelState.selectList.map((uid) => mapped.get(String(uid)) ?? String(uid));
+  }
+  if (world.rowRender) {
+    world.rowRender.revision += 1;
+    if (world.rowRender.status === 'rendering') booksViewSlice.releaseRows(name, world);
+  }
+  listPanelState.pruneEntrySearchCacheStaleEntries(name, new Set());
+  sortEntriesIfNeeded(name);
+  await refreshSearchFilter(new Set([name]));
+  await updateEntryDemand();
 };
 
 const getBookSortChoice = (name) => {
@@ -481,7 +532,7 @@ const setSelectedBookInCoreUi = (bookName) =>
 const clickCoreUiAction = (possibleSelectors, options = {}) =>
   clickCoreUiActionBridge(possibleSelectors, options);
 
-const refreshSearchFilter = () => filterBarSlice?.refreshSearchFilter?.();
+const refreshSearchFilter = (bookNames = null) => filterBarSlice?.refreshSearchFilter?.(bookNames);
 const invalidateSearchFilter = () => filterBarSlice?.invalidateSearchFilter?.();
 const captureRefreshGuard = () => {
   const generation = refreshWorkerGeneration;
@@ -604,8 +655,10 @@ const isBookDomFilteredOut = (bookRoot) =>
   bookRoot.classList.contains('stwid--filter-query') ||
   bookRoot.classList.contains('stwid--filter-visibility');
 
-const updateFolderActiveToggles = () =>
+const updateFolderActiveToggles = () => {
   foldersViewSlice?.updateFolderActiveToggles({ isBookDomFilteredOut });
+  void updateEntryDemand().catch(reportRowRenderError);
+};
 
 const setupBooks = (list) => {
   const booksContainer = document.createElement('div');
@@ -736,6 +789,10 @@ const getListPanelApi = () => ({
   applyHiddenTabs,
   clearBookSortPreferences,
   destroyListPanel: teardownListPanel,
+  ensureEntryVisible,
+  openEntry,
+  updateEntryDemand,
+  getBookSortChoice,
   getBookVisibilityScope,
   getSelectionState: selectionDnDSlice.getSelectionState,
   hasExpandedBooks,
@@ -773,6 +830,11 @@ const initBookBrowser = (options) => {
     teardownListPanel();
   }
   state = { ...options };
+  state.navigationBooks = new Map();
+  state.updateEntryDemand = () => updateEntryDemand().catch(reportRowRenderError);
+  state.openEntry = openEntry;
+  state.releaseSearchRows = (world) => filterBarSlice?.releaseSearchRows?.(world);
+  state.registerSearchRows = (world) => filterBarSlice?.registerSearchRows?.(world);
   wireSlices();
   resetBookVisibilityState(BOOK_VISIBILITY_MODES);
   clearEntrySearchCache();
@@ -820,4 +882,4 @@ const initBookBrowser = (options) => {
   return getListPanelApi();
 };
 
-export { initBookBrowser, refreshList, waitForListRefreshIdle, refreshSearchFilter, invalidateSearchFilter };
+export { initBookBrowser, refreshList, waitForListRefreshIdle, refreshSearchFilter, invalidateSearchFilter, ensureEntryVisible, openEntry, remapEntryUids };

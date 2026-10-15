@@ -1,5 +1,7 @@
 ﻿import { mirrorEntryFieldsToOriginalData } from '../../shared/original-data.js';
 
+import { beginEntryNavigation } from '../../shared/entry-navigation.js';
+
 let context = null;
 
 // Lazily memoized `#entry_edit_template` child nodes. The template markup is
@@ -85,6 +87,7 @@ function buildEntrySelector({ entry, name, rowUid, world }) {
   selectorButton.classList.add('stwid--selector');
   selectorButton.title = 'Click to select entry';
   selectorButton.addEventListener('click', (evt) => {
+    const rowUid = entry.dataset.uid;
     evt.preventDefault();
     if (context.selectFrom !== null && context.selectFrom !== name) return;
     evt.stopPropagation();
@@ -145,7 +148,7 @@ function buildEntryBody({ world, worldEntry }) {
   return body;
 }
 
-function buildEntryStatusControls({ entryName, world, worldEntry }) {
+function buildEntryStatusControls({ entry, entryName, world, worldEntry }) {
   const status = document.createElement('div');
   status.classList.add('stwid--status');
   status.addEventListener('click', (evt) => {
@@ -175,7 +178,8 @@ function buildEntryStatusControls({ entryName, world, worldEntry }) {
     isEnabled.addEventListener('click', async () => {
       if (isSavingState) return;
 
-      const cachedEntry = context.cache[entryName].entries[worldEntry.uid];
+      const cachedEntry = context.cache[entryName]?.entries?.[entry.dataset.uid];
+      if (!cachedEntry) return;
       const prevDisabled = cachedEntry.disable;
       const nextDisabled = !prevDisabled;
       cachedEntry.disable = nextDisabled;
@@ -209,7 +213,8 @@ function buildEntryStatusControls({ entryName, world, worldEntry }) {
     strategySelect.addEventListener('change', async () => {
       if (isSavingState) return;
 
-      const cachedEntry = context.cache[entryName].entries[worldEntry.uid];
+      const cachedEntry = context.cache[entryName]?.entries?.[entry.dataset.uid];
+      if (!cachedEntry) return;
       const prevConstant = cachedEntry.constant;
       const prevVectorized = cachedEntry.vectorized;
       switch (strategySelect.value) {
@@ -257,29 +262,39 @@ function buildEntryStatusControls({ entryName, world, worldEntry }) {
   return status;
 }
 
-function attachEntryInteractionHandlers({ entry, entryName, rowUid, worldEntry }) {
-  let clickToken;
-  entry.addEventListener('click', async () => {
-    const token = context.uuidv4();
-    clickToken = token;
-    await context.editorPanel.openEntryEditor({
-      entry: worldEntry,
-      entryDom: entry,
-      name: entryName,
-      isTokenCurrent: () => clickToken === token,
-    });
-  });
+function attachEntryInteractionHandlers({ entry, entryName }) {
+  const open = async (navigation) => {
+    const cachedEntry = context.cache[entryName]?.entries?.[entry.dataset.uid];
+    if (!cachedEntry) return false;
+    const ownsNavigation = !navigation;
+    navigation ??= beginEntryNavigation();
+    try {
+      return await context.editorPanel.openEntryEditor({
+        entry: cachedEntry,
+        entryDom: entry,
+        name: entryName,
+        navigation,
+        isTokenCurrent: navigation.isCurrent,
+      });
+    } finally {
+      if (ownsNavigation) navigation.finish();
+    }
+  };
+  entry.stwidOpenEntry = open;
+  entry.addEventListener('click', () => { void open(); });
 
   entry.addEventListener('pointerdown', (evt) => {
     if (evt.button !== 0) return;
     if (context.selectFrom !== entryName) return;
-    if (!context.selectList?.includes?.(rowUid)) return;
+    if (!context.selectList?.includes?.(entry.dataset.uid)) return;
     entry.setAttribute('draggable', 'true');
   });
 }
 
-export const renderEntry = async (worldEntry, name, before = null) => {
-  const world = context.cache[name];
+export const renderEntry = async (worldEntry, name, before = null, options = {}) => {
+  // Demand rendering builds a private row set and publishes it atomically.
+  // Event handlers still resolve saved data through the canonical cache.
+  const world = options.world ?? context.cache[name];
   const rowUid = String(worldEntry.uid);
   world.dom.entry[worldEntry.uid] = {};
   const entry = document.createElement('div');
@@ -289,22 +304,28 @@ export const renderEntry = async (worldEntry, name, before = null) => {
     entry.dataset.uid = rowUid;
     entry.addEventListener('selectstart', (evt) => evt.preventDefault());
     entry.addEventListener('dragstart', (evt) => {
-      if (context.selectFrom === null || !context.selectList?.includes(rowUid)) {
+      if (context.selectFrom === null || !context.selectList?.includes(entry.dataset.uid)) {
         evt.preventDefault();
         return;
       }
       context.dom.books.classList.add('stwid--state-dragging');
+      context.dom.books.stwidDragEntryBook = name;
       evt.dataTransfer.setData('text/plain', entry.textContent);
+    });
+    entry.addEventListener('dragend', () => {
+      context.dom.books.stwidDragEntryBook = null;
+      context.dom.books.classList.remove('stwid--state-dragging');
+      void context.updateEntryDemand?.();
     });
     entry.append(buildEntrySelector({ entry, name, rowUid, world }));
     entry.append(buildEntryBody({ world, worldEntry }));
-    entry.append(buildEntryStatusControls({ entryName: name, world, worldEntry }));
+    entry.append(buildEntryStatusControls({ entry, entryName: name, world, worldEntry }));
     const actions = document.createElement('div');
     {
       actions.classList.add('stwid--actions');
       entry.append(actions);
     }
-    attachEntryInteractionHandlers({ entry, entryName: name, rowUid, worldEntry });
+    attachEntryInteractionHandlers({ entry, entryName: name });
 
     if (before) before.insertAdjacentElement('beforebegin', entry);
     else world.dom.entryList.append(entry);

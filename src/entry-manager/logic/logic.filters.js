@@ -71,7 +71,10 @@ const createRowFilterStateHelpers = () => {
   const updateEntryManagerRowFilterClass = (row) => {
     if (!row) return;
     const isFiltered = FILTER_DATASET_KEY_LIST.some((key) => row.dataset[key] === 'true');
-    row.classList.toggle('stwid--state-filtered', isFiltered);
+    if (row.classList.contains('stwid--state-filtered') !== isFiltered) {
+      row.classList.toggle('stwid--state-filtered', isFiltered);
+    }
+    row.stwidOnFilterStateChanged?.(isFiltered);
   };
 
   const setEntryManagerRowFilterState = (row, datasetFlagKey, filtered) => {

@@ -32,9 +32,13 @@ export const registerUiRefreshHooks = ({
   waitForListRefreshIdle,
   refreshSearchFilter,
   invalidateSearchFilter,
+  remapEntryUids,
 }) => {
-  uiRefreshHooks = { refreshList, renderEntry, entryState, waitForListRefreshIdle, refreshSearchFilter, invalidateSearchFilter };
+  uiRefreshHooks = { refreshList, renderEntry, entryState, waitForListRefreshIdle, refreshSearchFilter, invalidateSearchFilter, remapEntryUids };
 };
+
+export const notifyEntryUidsRemapped = (bookName, uidMap) =>
+  uiRefreshHooks?.remapEntryUids?.(bookName, uidMap);
 
 const callRefreshList = async () => {
   if (!uiRefreshHooks?.refreshList) {
@@ -89,6 +93,11 @@ const callEntryState = (entry) => {
 // while a genuine outside edit produces both. Injected the same way as the UI
 // refresh hooks, to keep `shared/` free of feature-folder imports.
 let characterFilterChangeHook = null;
+let entryChangeHook = null;
+
+export const registerEntryChangeHook = (hook) => {
+  entryChangeHook = typeof hook === 'function' ? hook : null;
+};
 
 export const registerCharacterFilterChangeHook = (onExternalChange) => {
   characterFilterChangeHook = typeof onExternalChange === 'function' ? onExternalChange : null;
@@ -189,6 +198,7 @@ export const applyEntryFieldDiff = ({
   isCurrentEditor,
   triggerEditorRefreshOnce,
   shouldRefreshEditor,
+  changedFields = null,
 }) => {
   let hasChange = false;
   const currentEntryIsOpen = isCurrentEditor(bookName, entryUid);
@@ -198,6 +208,7 @@ export const applyEntryFieldDiff = ({
     if (areEntryFieldValuesEqual(oldValue, newValue)) continue;
 
     hasChange = true;
+    changedFields?.add(fieldName);
     // Only reached when the value actually differs, which is exactly the
     // "external change" test the inline filter dropdown needs (E8b). Fired
     // here rather than from a `case`, so the field keeps the default branch's
@@ -222,7 +233,8 @@ export const applyEntryFieldDiff = ({
           expectedValue: updatedEntry.comment,
           triggerEditorRefreshOnce,
         });
-        cache[bookName].dom.entry[entryUid].comment.textContent = updatedEntry.comment;
+        const comment = cache[bookName].dom.entry[entryUid]?.comment;
+        if (comment) comment.textContent = updatedEntry.comment;
         break;
       }
       case 'key': {
@@ -232,17 +244,18 @@ export const applyEntryFieldDiff = ({
           expectedValue: updatedEntry[fieldName].join(', '),
           triggerEditorRefreshOnce,
         });
-        cache[bookName].dom.entry[entryUid].key.textContent = updatedEntry.key.join(', ');
+        const key = cache[bookName].dom.entry[entryUid]?.key;
+        if (key) key.textContent = updatedEntry.key.join(', ');
         break;
       }
       case 'disable': {
         if (hasChange && currentEntryIsOpen) {
           triggerEditorRefreshOnce();
         }
-        cache[bookName].dom.entry[entryUid].isEnabled.classList[newValue ? 'remove' : 'add'](
+        cache[bookName].dom.entry[entryUid]?.isEnabled?.classList[newValue ? 'remove' : 'add'](
           'fa-toggle-on',
         );
-        cache[bookName].dom.entry[entryUid].isEnabled.classList[newValue ? 'add' : 'remove'](
+        cache[bookName].dom.entry[entryUid]?.isEnabled?.classList[newValue ? 'add' : 'remove'](
           'fa-toggle-off',
         );
         break;
@@ -252,7 +265,8 @@ export const applyEntryFieldDiff = ({
         if (hasChange && currentEntryIsOpen) {
           triggerEditorRefreshOnce();
         }
-        cache[bookName].dom.entry[entryUid].strategy.value = callEntryState(updatedEntry);
+        const strategy = cache[bookName].dom.entry[entryUid]?.strategy;
+        if (strategy) strategy.value = callEntryState(updatedEntry);
         break;
       }
       default: {
@@ -272,10 +286,22 @@ export const applyEntryFieldDiff = ({
   }
 
   if (shouldRefreshEditor()) {
-    cache[bookName].dom.entry[entryUid].root.click();
+    cache[bookName].dom.entry[entryUid]?.root?.click();
   }
 
   return hasChange;
+};
+
+export const affectsEntrySort = (fields, sort) => {
+  // Every sorter falls back to title (and title falls back to primary keys).
+  if (fields.has('comment') || fields.has('key')) return true;
+  const keys = {
+    title: [], alphabetical: [], trigger: ['key'], position: ['position'],
+    depth: ['depth'], order: ['order'], uid: ['uid'], length: ['content'],
+    prompt: ['position', 'depth', 'order'], custom: ['extensions', 'uid'],
+    characterFilter: ['characterFilter'],
+  };
+  return (keys[sort] ?? []).some((key) => fields.has(key));
 };
 
 // Syncs one book's incoming data into the cache and the on-screen rows,
@@ -313,6 +339,10 @@ export const syncBookEntriesAndDom = async ({
     sort: updatedSort?.sort ?? Settings.instance.sortLogic,
     direction: updatedSort?.direction ?? Settings.instance.sortDirection,
   };
+  const effectiveSort = listPanelApi.getBookSortChoice?.(bookName)?.sort ?? sortChoice.sort;
+  const changedFields = new Set();
+  const entryChanges = new Map();
+  let membershipChanged = false;
 
   for (const [entryUid, entryData] of Object.entries(data.entries)) {
     world.entries[entryUid] = structuredClone(entryData);
@@ -324,6 +354,8 @@ export const syncBookEntriesAndDom = async ({
   for (const entryUid of Object.keys(cachedEntries)) {
     if (!canApply()) return false;
     if (world.entries[entryUid]) continue;
+    membershipChanged = true;
+    entryChanges.set(entryUid, null);
     cachedEntryDoms[entryUid]?.root?.remove();
     delete cachedEntryDoms[entryUid];
     delete cachedEntries[entryUid];
@@ -339,7 +371,9 @@ export const syncBookEntriesAndDom = async ({
     .filter((entryUid) => !cachedEntries[entryUid])
     .map((entryUid) => world.entries[entryUid]);
 
-  if (newEntries.length > 0) {
+  membershipChanged ||= newEntries.length > 0;
+  for (const entry of newEntries) entryChanges.set(String(entry.uid), new Set(Object.keys(entry)));
+  if (newEntries.length > 0 && (!cachedBook.rowRender || cachedBook.rowRender.status === 'mounted')) {
     // Sort the merged list (existing + all new entries) ONCE instead of
     // re-sorting the whole book per new entry (PERF-W4-02). Then, in a single
     // right-to-left pass, record each position's insert anchor: the nearest
@@ -388,6 +422,7 @@ export const syncBookEntriesAndDom = async ({
       return true;
     };
 
+    const fieldsForEntry = new Set();
     const entryHasChange = applyEntryFieldDiff({
       bookName,
       entryUid,
@@ -398,21 +433,34 @@ export const syncBookEntriesAndDom = async ({
       isCurrentEditor: (_, currentEntryUid) => isCurrentEditor(currentEntryUid),
       triggerEditorRefreshOnce,
       shouldRefreshEditor: () => needsEditorRefresh,
+      changedFields: fieldsForEntry,
     });
 
     if (entryHasChange) {
       hasUpdate = true;
+      for (const field of fieldsForEntry) changedFields.add(field);
+      entryChanges.set(entryUid, fieldsForEntry);
     }
   }
 
   if (!canApply()) return false;
   cachedBook.entries = world.entries;
+  if (cachedBook.rowRender) cachedBook.rowRender.revision += 1;
+  if (cachedBook.rowRender?.status === 'rendering') {
+    cachedBook.rowRender.generation += 1;
+    cachedBook.rowRender.status = 'unmounted';
+    cachedBook.rowRender.promise = null;
+    cachedDom.entryList.innerHTML = '';
+    cachedDom.entryList.removeAttribute('aria-busy');
+  }
   const prevSort = cachedBook.sort;
   listPanelApi.setCacheMetadata(bookName, world.metadata);
   const sortChanged = JSON.stringify(prevSort) !== JSON.stringify(cachedBook.sort);
-  if (hasUpdate || sortChanged) {
+  if (membershipChanged || sortChanged || (hasUpdate && affectsEntrySort(changedFields, effectiveSort))) {
     listPanelApi.sortEntriesIfNeeded(bookName);
   }
+  cachedBook.searchChanged = membershipChanged || changedFields.has('comment') || changedFields.has('key');
+  for (const [uid, fields] of entryChanges) entryChangeHook?.(bookName, uid, world.entries[uid], fields);
   const currentEditor = getCurrentEditor();
   const currentUid = currentEditor?.uid;
   if (
@@ -583,11 +631,12 @@ export const initWIUpdateHandler = ({
       await callWaitForListRefreshIdle();
       if (!isQueueCurrent()) return;
       uiRefreshHooks?.invalidateSearchFilter?.();
-
       const listPanelApi = getListPanelApi();
       const editorPanelApi = getEditorPanelApi();
       const isRefreshCurrent = listPanelApi?.captureRefreshGuard?.() ?? (() => true);
       const isCurrent = () => isQueueCurrent() && isRefreshCurrent();
+      const previousNames = Object.keys(cache);
+      const structureChanged = previousNames.length !== world_names.length || world_names.some((name) => !cache[name]);
       removeStaleCachedBooks({ cache, worldNames: world_names });
       await renderMissingBooks({
         cache,
@@ -604,6 +653,7 @@ export const initWIUpdateHandler = ({
         return;
       }
       const errors = new Map();
+      const searchBooks = new Set();
       for (const { name, data } of batch) {
         if (!isCurrent()) return;
         if (!name || !cache[name]) continue;
@@ -619,6 +669,7 @@ export const initWIUpdateHandler = ({
             shouldAutoRefreshEditor,
             isCurrent,
           });
+          if (cache[name]?.searchChanged) searchBooks.add(name);
           if (!isCurrent()) {
             if (isQueueCurrent()) await callWaitForListRefreshIdle();
             return;
@@ -630,7 +681,10 @@ export const initWIUpdateHandler = ({
       }
       if (!isCurrent()) return;
       getRefreshBookSourceLinks()?.('worldinfo_updated');
-      await uiRefreshHooks?.refreshSearchFilter?.();
+      await uiRefreshHooks?.refreshSearchFilter?.(
+        structureChanged || batch.some(({ name }) => !name) ? null : searchBooks,
+      );
+      await listPanelApi?.updateEntryDemand?.();
       return errors;
     } finally {
       isWIUpdateInProgress = false;
@@ -665,10 +719,7 @@ export const initWIUpdateHandler = ({
 
   const reopenEditorEntry = (editorState) => {
     if (!editorState?.name || editorState?.uid === null || editorState?.uid === undefined) return;
-    const entryDom = cache[editorState.name]?.dom?.entry?.[editorState.uid]?.root;
-    if (entryDom) {
-      entryDom.click();
-    }
+    void getListPanelApi()?.openEntry?.(editorState.name, editorState.uid);
   };
 
   const { queueEditorDuplicateRefresh } = createEditorDuplicateRefreshWorker({

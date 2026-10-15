@@ -163,10 +163,16 @@ const initDrawerEntryManager = ({
     $,
   });
 
-const wireMobileBackButton = ({ dom, editorPanelApi, mobileBackBtn }) => {
+const wireMobileBackButton = ({ dom, editorPanelApi, getCurrentEditor, mobileBackBtn }) => {
   mobileBackBtn.addEventListener('click', () => {
     if (dom.order.toggle?.classList?.contains(ENTRY_MANAGER_ACTIVE_CLASS)) {
       dom.order.toggle.click();
+      return;
+    }
+
+    const currentEditor = getCurrentEditor();
+    if (currentEditor && editorPanelApi.isDirty(currentEditor.name, currentEditor.uid)) {
+      toastr.warning('Unsaved edits detected. Save or discard changes before returning to Books.');
       return;
     }
 
@@ -216,6 +222,7 @@ const wireWorldEntrySelectionContext = ({
     selectAdd: listPanelApi.selectAdd,
     selectEnd: listPanelApi.selectEnd,
     selectRemove: listPanelApi.selectRemove,
+    updateEntryDemand: listPanelApi.updateEntryDemand,
     uuidv4,
     editorPanel: editorPanelApi,
     get currentEditor() {
@@ -295,9 +302,10 @@ const buildAndAttachDrawerDom = ({
   });
   setEditorPanelApi.current = editorPanelApi;
 
-  wireMobileBackButton({ dom, editorPanelApi, mobileBackBtn });
+  wireMobileBackButton({ dom, editorPanelApi, getCurrentEditor, mobileBackBtn });
 
   const listPanelApi = initBookBrowser({
+    getCurrentEditor,
     Settings,
     METADATA_NAMESPACE,
     METADATA_SORT_KEY,
@@ -518,6 +526,7 @@ const mountDrawerUI = ({
   wireCloseButton({ dom, drawerContent });
 
   const observerCleanup = installDrawerObservers({
+    getListPanelApi: () => listPanelApi,
     drawerContent,
     cache,
     getCurrentEditor,

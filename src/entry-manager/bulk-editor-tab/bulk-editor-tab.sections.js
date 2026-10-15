@@ -185,10 +185,12 @@ export const buildEntryManagerTabs = ({ displayToolbarEl, bulkEditRowEl }) => {
     tabButtonEl.classList.add('stwid--icon-tab__button');
     tabButtonEl.dataset.tabId = tab.id;
     tabButtonEl.setAttribute('role', 'tab');
+    tabButtonEl.setAttribute('aria-label', tab.label);
     tabButtonEl.setAttribute('aria-selected', 'false');
     tabButtonEl.title = `${tab.label} tab`;
 
     const tabIconEl = document.createElement('i');
+    tabIconEl.setAttribute('aria-hidden', 'true');
     tabIconEl.classList.add('fa-solid', 'fa-fw', tab.icon);
     tabButtonEl.append(tabIconEl);
 
@@ -351,6 +353,7 @@ export const buildEntryManagerTable = async ({
     isRenderCurrent,
     createEntryManagerRowFilter,
     entries,
+    entryManagerState,
     dom,
     cache,
     refreshOutletFilterIndicator,

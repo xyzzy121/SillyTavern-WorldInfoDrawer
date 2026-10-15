@@ -29,6 +29,104 @@ const createBooksViewSlice = ({
   const pendingReplacementRoots = new WeakMap();
   let renderGeneration = 0;
   let disposed = false;
+  const isPinned = (name) =>
+    runtime.navigationBooks?.has(name) ||
+    runtime.getCurrentEditor?.()?.name === name ||
+    runtime.dom.books.stwidDragEntryBook === name ||
+    (listPanelState.selectFrom === name && listPanelState.selectList?.length > 0) ||
+    listPanelState.dragBookName === name;
+  const needsRows = (name, world) => {
+    if (isPinned(name)) return true;
+    const root = world.dom?.root;
+    if (!root || world.dom.entryList.classList.contains('stwid--state-collapsed')) return false;
+    if (root.classList.contains('stwid--filter-query') || root.classList.contains('stwid--filter-visibility')) return false;
+    const folder = isFolderGroupingEnabled()
+      ? listPanelState.getFolderDom?.(getFolderFromMetadata(world.metadata)) : null;
+    return !folder || (!folder.root.hidden && !folder.books.classList.contains('stwid--state-collapsed'));
+  };
+  const releaseRows = (name, world) => {
+    const rows = world.rowRender;
+    if (!rows || rows.status === 'unmounted') return;
+    rows.generation += 1;
+    rows.status = 'unmounted';
+    rows.promise = null;
+    world.dom.entryList.innerHTML = '';
+    world.dom.entry = {};
+    world.dom.entryList.removeAttribute?.('aria-busy');
+    runtime.releaseSearchRows?.(world);
+  };
+  const ensureBookRows = (name, { force = false } = {}) => {
+    const world = runtime.cache[name];
+    if (!world || disposed) return Promise.resolve(false);
+    const rows = world.rowRender;
+    if (!force && !needsRows(name, world)) {
+      releaseRows(name, world);
+      return Promise.resolve(false);
+    }
+    if (rows.status === 'mounted') return Promise.resolve(true);
+    if (rows.promise) return rows.promise;
+    const generation = ++rows.generation;
+    const listGeneration = renderGeneration;
+    const entries = world.entries;
+    const revision = rows.revision;
+    const isCurrent = () => !disposed && listGeneration === renderGeneration &&
+      runtime.cache[name] === world && world.entries === entries && rows.revision === revision && rows.generation === generation &&
+      (force || needsRows(name, world));
+    rows.status = 'rendering';
+    world.dom.entryList.setAttribute('aria-busy', 'true');
+    const loading = document.createElement('div');
+    loading.classList.add('stwid--entry-loading');
+    loading.textContent = 'Loading entries…';
+    loading.setAttribute('role', 'status');
+    world.dom.entryList.append(loading);
+    const task = async () => {
+      const staging = { ...world, dom: { ...world.dom, entry: {}, entryList: document.createElement('div') } };
+      const { sort, direction } = getBookSortChoice(name);
+      const sorted = runtime.sortEntries(Object.values(entries), sort, direction);
+      const checkpoint = createWorkBudget({ maxItems: ENTRY_RENDER_BATCH_SIZE });
+      for (const entry of sorted) {
+        if (!isCurrent()) return false;
+        await runtime.renderEntry(entry, name, null, { world: staging });
+        const pause = checkpoint();
+        if (pause) await pause;
+      }
+      if (!isCurrent()) return false;
+      const query = (listPanelState.searchInput?.value ?? '').toLowerCase();
+      const filterEntries = Boolean(listPanelState.searchEntriesInput?.checked) &&
+        query.length >= 2 && !name.toLowerCase().includes(query);
+      for (const entry of sorted) {
+        const match = !filterEntries || `${entry.comment ?? ''}\n${(entry.key ?? []).join(', ')}`.toLowerCase().includes(query);
+        staging.dom.entry[entry.uid]?.root?.classList.toggle('stwid--filter-query', !match);
+      }
+      world.dom.entryList.innerHTML = '';
+      world.dom.entryList.append(...Array.from(staging.dom.entryList.children));
+      world.dom.entry = staging.dom.entry;
+      staging.dom.entryList = world.dom.entryList;
+      runtime.registerSearchRows?.(world);
+      rows.status = 'mounted';
+      return true;
+    };
+    rows.promise = task().finally(() => {
+      if (rows.generation !== generation) return;
+      rows.promise = null;
+      loading.remove();
+      world.dom.entryList.removeAttribute?.('aria-busy');
+      if (rows.status === 'rendering') rows.status = 'unmounted';
+    });
+    return rows.promise;
+  };
+  const updateEntryDemand = async () => {
+    // Sequential work budgets prevent expanding many books from spawning many
+    // simultaneous row builders and starving input on mobile.
+    for (const [name, world] of Object.entries(runtime.cache)) {
+      if (disposed) return;
+      if (!needsRows(name, world)) releaseRows(name, world);
+    }
+    for (const [name, world] of Object.entries(runtime.cache)) {
+      if (disposed) return;
+      if (needsRows(name, world)) await ensureBookRows(name);
+    }
+  };
   const isFolderGroupingEnabled = () => Boolean(runtime?.Settings?.instance?.featureFolderGrouping);
   const compareCaseInsensitiveNames = (leftName, rightName) =>
     leftName.toLowerCase().localeCompare(rightName.toLowerCase());
@@ -50,6 +148,7 @@ const createBooksViewSlice = ({
       metadata: cloneMetadata(rawMetadata),
       sort: runtime.getSortFromMetadata(rawMetadata),
       extras: structuredClone(rawExtras),
+      rowRender: { status: 'unmounted', generation: 0, revision: 0, promise: null },
     };
     for (const [entryId, entryData] of Object.entries(rawEntries ?? {})) {
       world.entries[entryId] = structuredClone(entryData);
@@ -160,6 +259,7 @@ const createBooksViewSlice = ({
       for (const bookDom of Object.values(runtime.cache)) {
         bookDom.dom.root.classList.remove('stwid--state-target');
       }
+      void runtime.updateEntryDemand?.();
     });
     title.addEventListener('click', () => {
       toggleBookCollapsedState(bookName, entryList);
@@ -228,9 +328,15 @@ const createBooksViewSlice = ({
       };
       try {
         runtime.cache[bookName].entries[newEntry.uid] = structuredClone(newEntry);
-        await runtime.renderEntry(newEntry, bookName);
+        runtime.cache[bookName].rowRender.revision += 1;
+        if (runtime.cache[bookName].rowRender.status === 'rendering') {
+          releaseRows(bookName, runtime.cache[bookName]);
+        }
+        if (runtime.cache[bookName].rowRender.status === 'mounted') {
+          await runtime.renderEntry(newEntry, bookName);
+        }
+        await runtime.openEntry?.(bookName, newEntry.uid);
         entryRendered = true;
-        runtime.cache[bookName].dom.entry[newEntry.uid].root.click();
         editorOpened = true;
         await runtime.saveWorldInfo(bookName, saveData, true);
       } catch (err) {
@@ -363,20 +469,6 @@ const createBooksViewSlice = ({
     const head = buildBookHeader(name, world, entryList);
     book.append(head);
 
-    const { sort, direction } = getBookSortChoice(name);
-    const sortedEntries = runtime.sortEntries(Object.values(world.entries), sort, direction);
-    const checkpoint = createWorkBudget({ maxItems: ENTRY_RENDER_BATCH_SIZE });
-    for (let i = 0; i < sortedEntries.length; i++) {
-      await runtime.renderEntry(sortedEntries[i], name);
-      const pause = checkpoint();
-      if (pause) await pause;
-      // A WORLDINFO_UPDATED event can land while we were yielded and replace or
-      // remove this book's cache entry. Our detached `world`/`book` is now stale,
-      // so abort the render and let the fresh pass rebuild it.
-      if (!isCurrent() || runtime.cache[name] !== world) {
-        return null;
-      }
-    }
     const initialCollapsed =
       listPanelState.getCollapseState(name) ??
       entryList.classList.contains('stwid--state-collapsed');
@@ -401,6 +493,9 @@ const createBooksViewSlice = ({
     const isCurrent = () =>
       !disposed && generation === renderGeneration && (options.isCurrent?.() ?? true);
     if (!isCurrent()) return false;
+    runtime.dom.books.stwidDragEntryBook = null;
+    listPanelState.dragBookName = null;
+    runtime.dom.books.classList.remove('stwid--state-dragging');
     runtime.dom.books.innerHTML = '';
     foldersViewSlice.resetFolderDoms();
 
@@ -432,6 +527,9 @@ const createBooksViewSlice = ({
   return {
     loadList,
     renderBook,
+    ensureBookRows,
+    updateEntryDemand,
+    releaseRows,
     invalidate: () => { renderGeneration += 1; },
     cleanup: () => {
       disposed = true;

@@ -153,6 +153,41 @@ test('UID zero matches, signatures detect edits at capacity, and removed UIDs ar
   assert.equal(state.entrySearchCacheEntryCount, 1);
 });
 
+test('unmounted books search canonical data and stop after the first match', async () => {
+  const book = makeBook(500);
+  book.dom.entry = {};
+  book.rowRender = { status: 'unmounted' };
+  let reads = 0;
+  Object.defineProperty(book.entries[1], 'comment', { get() { reads += 1; return 'later'; } });
+  const { controls } = await makeHarness({ Library: book });
+  controls.searchEntriesCheckbox.checked = true;
+  controls.search.value = 'needle 0';
+  assert.equal(await controls.refreshSearchFilter(), true);
+  assert.equal(book.dom.root.classList.contains(filterClass), false);
+  assert.equal(reads, 0, 'visibility needs only the first match');
+  controls.search.value = 'missing';
+  assert.equal(await controls.refreshSearchFilter(), true);
+  assert.equal(book.dom.root.classList.contains(filterClass), true);
+  assert.equal(Object.keys(book.dom.entry).length, 0);
+});
+
+test('scoped save refresh avoids reading unchanged books after a completed query', async () => {
+  const first = makeBook(1);
+  const untouched = makeBook(1);
+  first.dom.entry = {};
+  untouched.dom.entry = {};
+  first.rowRender = untouched.rowRender = { status: 'unmounted' };
+  const { controls } = await makeHarness({ First: first, Untouched: untouched });
+  controls.searchEntriesCheckbox.checked = true;
+  controls.search.value = 'needle';
+  await controls.refreshSearchFilter();
+  Object.defineProperty(untouched, 'entries', { get() { assert.fail('unaffected books must not be scanned'); } });
+  first.entries[0].comment = 'changed';
+  assert.equal(await controls.refreshSearchFilter(new Set(['First'])), true);
+  assert.equal(first.dom.root.classList.contains(filterClass), true);
+  assert.equal(untouched.dom.root.classList.contains(filterClass), false);
+});
+
 test('name-only, short queries, and clearing restore filtered rows without enumerating entries', async () => {
   const book = makeBook(3);
   const { controls } = await makeHarness({ Library: book });
