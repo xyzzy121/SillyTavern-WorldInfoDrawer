@@ -1,5 +1,6 @@
+import { openContextMenu } from '../../shared/context-menu.js';
 import { createExtensionIntegrationsSlice } from './book-list.extension-integrations.js';
-import { addKeyboardClickSupport, createBookMenuActionItem } from './book-list.book-menu.item.js';
+import { createBookMenuActionItem } from './book-list.book-menu.item.js';
 import { createBookImportHandlers } from './book-list.book-menu.import.js';
 import {
   createBookCrudHandlers,
@@ -9,7 +10,8 @@ import {
 const UNSAVED_EDITS_WARNING_PREFIX = 'Unsaved edits detected. Save or discard changes before';
 
 const createBookMenuTriggerButton = () => {
-  const menuTrigger = document.createElement('div');
+  const menuTrigger = document.createElement('button');
+  menuTrigger.type = 'button';
   menuTrigger.classList.add(
     'stwid--action',
     'stwid--list-dropdown__trigger',
@@ -20,35 +22,8 @@ const createBookMenuTriggerButton = () => {
   menuTrigger.title = 'Book menu';
   menuTrigger.setAttribute('aria-label', 'Book menu');
   menuTrigger.setAttribute('aria-expanded', 'false');
-  menuTrigger.setAttribute('aria-haspopup', 'true');
-  addKeyboardClickSupport(menuTrigger);
+  menuTrigger.setAttribute('aria-haspopup', 'dialog');
   return menuTrigger;
-};
-
-const createBookMenuOverlay = (menuTrigger) => {
-  menuTrigger.style.anchorName = '--stwid--ctx-anchor';
-  const blocker = document.createElement('div');
-  blocker.classList.add('stwid--blocker');
-  for (const eventName of ['mousedown', 'pointerdown', 'touchstart']) {
-    blocker.addEventListener(eventName, (evt) => {
-      evt.stopPropagation();
-    });
-  }
-  const closeMenu = () => {
-    blocker.remove();
-    menuTrigger.style.anchorName = '';
-    menuTrigger.setAttribute('aria-expanded', 'false');
-    menuTrigger.focus();
-  };
-  blocker.addEventListener('click', (evt) => {
-    evt.stopPropagation();
-    closeMenu();
-  });
-  const menu = document.createElement('div');
-  menu.classList.add('stwid--list-dropdown__menu', 'stwid--menu');
-  menu.setAttribute('role', 'menu');
-  menuTrigger.setAttribute('aria-expanded', 'true');
-  return { blocker, menu, closeMenu };
 };
 
 const buildRenameBookMenuItem = (
@@ -87,6 +62,7 @@ const buildBookSortSelect = (
 ) => {
   const sortSelect = document.createElement('select');
   sortSelect.classList.add('text_pole');
+  sortSelect.setAttribute('aria-label', 'Book Sort');
   sortSelect.addEventListener('click', (evt) => evt.stopPropagation());
 
   const hasCustomSort = Boolean(state.cache[name].sort);
@@ -141,7 +117,6 @@ const buildEntryManagerMenuItem = (name, closeMenu, { state }) =>
       state.openEntryManager(name, [name]);
       closeMenu?.();
     },
-    enableKeyboard: false,
   });
 
 const buildExportBookMenuItem = (name, closeMenu, { state }) =>
@@ -230,12 +205,18 @@ const createBookMenuUiHelpers = ({
 
   const buildBookMenuTrigger = (name) => {
     const menuTrigger = createBookMenuTriggerButton();
-    menuTrigger.addEventListener('click', () => {
-      const { blocker, menu, closeMenu } = createBookMenuOverlay(menuTrigger);
-      appendCoreBookMenuItems(menu, name, closeMenu);
-      appendIntegrationMenuItems(menu, name, closeMenu);
-      blocker.append(menu);
-      document.body.append(blocker);
+    menuTrigger.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openContextMenu({
+        trigger: menuTrigger,
+        label: `Book menu: ${name}`,
+        event,
+        build: (menu, closeMenu) => {
+          appendCoreBookMenuItems(menu, name, closeMenu);
+          appendIntegrationMenuItems(menu, name, closeMenu);
+        },
+      });
     });
     return menuTrigger;
   };

@@ -1,6 +1,7 @@
 ﻿import { mirrorEntryFieldsToOriginalData } from '../../shared/original-data.js';
 
 import { beginEntryNavigation } from '../../shared/entry-navigation.js';
+import { applyEntryToggleA11y, syncEntryToggleChecked } from '../../shared/entry-toggle-a11y.js';
 
 let context = null;
 
@@ -172,6 +173,7 @@ function buildEntryStatusControls({ entry, entryName, world, worldEntry }) {
     const applyEnabledIcon = (disabled) => {
       isEnabled.classList.toggle('fa-toggle-off', Boolean(disabled));
       isEnabled.classList.toggle('fa-toggle-on', !Boolean(disabled));
+      syncEntryToggleChecked(isEnabled);
     };
 
     applyEnabledIcon(worldEntry.disable);
@@ -199,6 +201,7 @@ function buildEntryStatusControls({ entry, entryName, world, worldEntry }) {
         isEnabled.disabled = false;
       }
     });
+    applyEntryToggleA11y(isEnabled);
     status.append(isEnabled);
   }
 

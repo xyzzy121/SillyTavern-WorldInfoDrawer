@@ -1,5 +1,58 @@
 # Performance and responsiveness validation
 
+## October 15, 2026: selective upstream adoption
+
+This comparison uses the clean fork at `60f62f5` as its baseline and the final
+upstream-adoption/mobile-menu source as its after snapshot. It is separate from
+the demand-rendering comparison below. Both use the same isolated SillyTavern
+1.19.0 host, Node 26.2.0, Playwright 1.64.0, and Chromium 156.0.8078.4.
+No other browser test workloads ran during these measurements.
+
+The fixture is one book containing 4,000 short entries. Mobile uses 390 × 844
+with 4× CPU throttling; desktop uses 1440 × 1000 at native speed. Each batch
+discards one warmup. Synthetic book reads include serialization and parsing,
+but exclude disk/network latency. Saves and provider metadata are intercepted
+locally; no model generation is requested.
+
+| Manager opening batch | Measured samples per version | Before median | After median | Change |
+| --- | ---: | ---: | ---: | ---: |
+| Mobile, initial comparison | 3 | 7,987 ms | 9,204 ms | +15.2% |
+| Mobile, focused repeat | 5 | 8,684 ms | 7,322 ms | −15.7% |
+| Desktop, initial comparison | 3 | 1,897 ms | 1,418 ms | −25.2% |
+
+The initial mobile slowdown did not reproduce in the focused repeat. The
+five-sample ranges were 7,108–9,065 ms before and 6,751–9,135 ms after. These
+small, variable batches do not establish a speedup or a repeatable opening
+regression. Keep both batches when interpreting the result; do not select only
+the favorable run. A 4,000-row manager still has a substantial opening cost on
+the throttled mobile profile.
+
+All cases retained 4,000 logical rows with roughly 197 mobile or 213 desktop
+controls when the manager opened, rather than controls for every row. Closing
+released all manager and entry rows. The benchmark recorded no browser errors.
+Static review found no added per-row query or focus polling in manager opening;
+reorder snapshots run only when a reorder is requested, and context-menu
+observers/listeners exist only while their popup is open.
+
+Scrolling and settlement are supplemental single observations per batch, not
+repeated distributions. The after samples hydrated 232 more intermediate
+controls than the before samples, so first-scroll times compare different
+amounts of work. The existing 120 ms scroll-idle scheduler can resume between
+the benchmark's two-frame scroll steps when frames are long. The report keeps
+these control counts beside the timings. Warm-scroll observations were lower
+on mobile and similar on desktop, but likewise do not establish a repeatable
+speed change. The new sticky mobile tab dock includes theme blur; no specific
+regression from that rendering cost was established by these measurements.
+
+Workspace artifacts are in `upstream-validation`: `report.html` and
+`comparison.json` preserve the initial pair; `confirmation-report.html` and
+`confirmation.json` preserve the focused mobile repeat. Each links its raw
+results, actual sample counts, ranges, lifecycle counters, and request counts.
+Source hashes cover the exact files served by each benchmark; both after
+snapshots and the functional-test runtime copies match the final production
+source. See [VALIDATION.md](VALIDATION.md) for the functional results and retained
+host-startup diagnostics.
+
 ## October 2026: demand rendering and mobile responsiveness
 
 Collapsed books now retain their headers and cached data without constructing

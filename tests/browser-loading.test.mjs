@@ -12,7 +12,9 @@ const deferred = () => {
 const turn = () => new Promise((resolve) => setImmediate(resolve));
 
 test('book reads share a four-request limit and return original order', async () => {
+  const names = ['A', 'B', 'C', 'D', 'E', 'F'];
   const requests = new Map();
+  const admitted = new Map(names.map((name) => [name, deferred()]));
   let active = 0;
   let maximum = 0;
   const loader = createBookLoader((name) => {
@@ -20,16 +22,19 @@ test('book reads share a four-request limit and return original order', async ()
     maximum = Math.max(maximum, active);
     const request = deferred();
     requests.set(name, request);
+    admitted.get(name).resolve();
     return request.promise.finally(() => { active -= 1; });
   });
-  const result = loader.loadMany(['A', 'B', 'C', 'D', 'E', 'F']);
-  await turn();
+  const result = loader.loadMany(names);
+  await Promise.all(names.slice(0, 4).map((name) => admitted.get(name).promise));
   assert.deepEqual([...requests.keys()], ['A', 'B', 'C', 'D']);
   requests.get('D').resolve({ entries: {} });
-  await turn();
+  // A worker may cross its elapsed-time work budget before admitting its next
+  // request. Observe admission itself instead of assuming one event-loop turn.
+  await admitted.get('E').promise;
   assert.ok(requests.has('E'));
   requests.get('C').resolve({ entries: {} });
-  await turn();
+  await admitted.get('F').promise;
   for (const request of requests.values()) request.resolve({ entries: {} });
   assert.deepEqual((await result).map((book) => book.name), ['A', 'B', 'C', 'D', 'E', 'F']);
   assert.equal(maximum, 4);
@@ -326,6 +331,7 @@ test('refresh worker coalesces startup calls and replaces obsolete work with one
   const context = vm.createContext({ console, document: { createElement: () => new Element() }, toastr: { error: assert.fail } });
   const module = new vm.SourceTextModule(source, { context });
   const valuesByFile = {
+    'context-menu.js': { closeContextMenu: noop },
     'sort-helpers.js': { cloneMetadata: structuredClone },
     'entry-navigation.js': { beginEntryNavigation: () => ({ isCurrent: () => true }) },
     'book-folders.lorebook-folders.js': Object.fromEntries(['getFolderFromMetadata', 'getFolderRegistry', 'registerFolderName', 'sanitizeFolderMetadata', 'setFolderInMetadata'].map((key) => [key, noop])),

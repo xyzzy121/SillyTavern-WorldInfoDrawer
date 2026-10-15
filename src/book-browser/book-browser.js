@@ -1,3 +1,4 @@
+import { closeContextMenu } from '../shared/context-menu.js';
 import { cloneMetadata } from '../shared/sort-helpers.js';
 import { beginEntryNavigation } from '../shared/entry-navigation.js';
 import {
@@ -594,6 +595,7 @@ const runRefreshWorker = async () => {
 };
 
 const refreshList = async () => {
+  closeContextMenu();
   if (!listPanelInitialized) return;
   const generation = refreshWorkerGeneration;
   refreshRequestToken += 1;
@@ -674,6 +676,7 @@ const setupBooks = (list) => {
 };
 
 const teardownListPanel = () => {
+  closeContextMenu();
   if (listPanelState.folderMenuActions) closeAddLorebooksDialog(listPanelState.folderMenuActions);
   booksViewSlice?.cleanup?.();
   if (state.dom?.books) {

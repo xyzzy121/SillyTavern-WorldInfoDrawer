@@ -32,7 +32,7 @@ test('browse tabs, search, edit and persist, back and close', async ({ page }, i
   expect(overflow.scroll).toBeLessThanOrEqual(overflow.width + 2);
   await page.locator('.stwid--mobile-back-btn').tap();
   await expect(page.locator('.stwid--list')).toBeVisible();
-  await page.locator('#WI-SP-button .drawer-toggle').tap();
+  await page.getByRole('button', { name: 'Close World Info', exact: true }).tap();
   await expect(page.locator('.stwid--body[data-extension-src]')).toBeHidden();
   await openDrawer(page); await openEntry(page);
   await expect(title).toHaveValue('Mobile edited title');
@@ -57,7 +57,7 @@ test('failed save preserves draft on Back, close, rotation and guarded navigatio
   await expect(title).toHaveValue('Unsaved mobile draft');
   await expect(title).toBeVisible();
   await expect(page.locator('#toast-container')).toContainText('Unsaved edits');
-  await page.locator('#WI-SP-button .drawer-toggle').tap();
+  await page.getByRole('button', { name: 'Close World Info', exact: true }).tap();
   await openDrawer(page);
   await expect(title).toHaveValue('Unsaved mobile draft');
   for (const width of [767, 769, 1001, 999]) {

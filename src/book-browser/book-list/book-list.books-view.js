@@ -351,7 +351,8 @@ const createBooksViewSlice = ({
       actions.append(menuTrigger);
     }
 
-    collapseToggle = document.createElement('div');
+    collapseToggle = document.createElement('button');
+    collapseToggle.type = 'button';
     runtime.cache[bookName].dom.collapseToggle = collapseToggle;
     collapseToggle.classList.add('stwid--action');
     collapseToggle.classList.add('stwid--collapseToggle');

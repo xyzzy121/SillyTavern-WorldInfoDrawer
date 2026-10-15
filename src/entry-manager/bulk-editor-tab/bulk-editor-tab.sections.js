@@ -170,6 +170,11 @@ export const buildEntryManagerTabs = ({ displayToolbarEl, bulkEditRowEl }) => {
   const iconTab = document.createElement('div');
   iconTab.classList.add('stwid--icon-tab');
 
+  // This sibling of the panels stays within the manager scrollport rather
+  // than releasing its sticky position at the bottom of the active panel.
+  const iconTabDock = document.createElement('div');
+  iconTabDock.classList.add('stwid--icon-tab__dock');
+
   const iconTabBar = document.createElement('div');
   iconTabBar.classList.add('stwid--icon-tab__bar');
   iconTabBar.setAttribute('role', 'tablist');
@@ -217,9 +222,9 @@ export const buildEntryManagerTabs = ({ displayToolbarEl, bulkEditRowEl }) => {
   tabPanelsById.get(TAB_ID_DISPLAY)?.append(displayToolbarEl);
   tabPanelsById.get(TAB_ID_BULK_EDITOR)?.append(bulkEditRowEl);
 
-  iconTab.prepend(iconTabBar);
+  iconTabDock.append(iconTabBar);
   setActiveEntryManagerTab({ tabButtons, tabPanels, tabId: TAB_ID_DISPLAY });
-  return iconTab;
+  return { iconTabDock, iconTab };
 };
 
 export const buildEntryManagerFilterPanel = ({

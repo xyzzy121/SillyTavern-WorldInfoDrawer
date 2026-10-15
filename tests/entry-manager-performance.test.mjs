@@ -313,7 +313,8 @@ async function renderHarness({ saveWorldInfo = async () => {}, ensureCustomDispl
   const sections = {
     buildEntryManagerRootEl: () => new Element(),
     buildEntryManagerTopRows: () => ({ refreshDisplayToolbar() {}, refreshSelectionCount() {} }),
-    buildEntryManagerTabs: () => new Element(), buildEntryManagerFilterPanel: () => new Element(),
+    buildEntryManagerTabs: () => ({ iconTabDock: new Element(), iconTab: new Element() }),
+    buildEntryManagerFilterPanel: () => new Element(),
     buildEntryManagerTable: async ({ entries }) => {
       built.push(entries[0].book);
       const wrap = new Element();

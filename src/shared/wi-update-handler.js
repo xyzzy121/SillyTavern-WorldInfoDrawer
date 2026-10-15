@@ -11,6 +11,7 @@ import { registerBookReloadHooks } from './book-reload.js';
 import { cloneMetadata, getSortFromMetadata, sortEntries } from './sort-helpers.js';
 import { createDeferred } from './utils.js';
 import { createUpdateQueue } from './update-queue.js';
+import { syncEntryToggleChecked } from './entry-toggle-a11y.js';
 
 const LOG_PREFIX = '[STWID]';
 const EDITOR_ROOT_SELECTOR = '.stwid--editor';
@@ -252,12 +253,12 @@ export const applyEntryFieldDiff = ({
         if (hasChange && currentEntryIsOpen) {
           triggerEditorRefreshOnce();
         }
-        cache[bookName].dom.entry[entryUid]?.isEnabled?.classList[newValue ? 'remove' : 'add'](
-          'fa-toggle-on',
-        );
-        cache[bookName].dom.entry[entryUid]?.isEnabled?.classList[newValue ? 'add' : 'remove'](
-          'fa-toggle-off',
-        );
+        const toggle = cache[bookName].dom.entry[entryUid]?.isEnabled;
+        if (toggle) {
+          toggle.classList.toggle('fa-toggle-on', !newValue);
+          toggle.classList.toggle('fa-toggle-off', Boolean(newValue));
+          syncEntryToggleChecked(toggle);
+        }
         break;
       }
       case 'constant':
@@ -652,6 +653,7 @@ export const initWIUpdateHandler = ({
         if (isQueueCurrent()) await callWaitForListRefreshIdle();
         return;
       }
+      if (structureChanged) listPanelApi?.updateCollapseAllToggle?.();
       const errors = new Map();
       const searchBooks = new Set();
       for (const { name, data } of batch) {

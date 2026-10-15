@@ -65,6 +65,34 @@ body.stwid-- #WorldInfo {
 /* Show drawer when ST sets openDrawer */
 body.stwid-- #WorldInfo.openDrawer {
   display: flex !important; /* override: ST's inline-drawer sets display:none by default; must force flex when openDrawer class is applied */
+  z-index: 3001; /* above pinned host panels, below the popup overlay band */
+}
+
+.stwid--drawer-close {
+  display: none;
+}
+
+@media (max-width: 1000px) {
+  body.stwid-- .stwid--drawer-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    margin-left: auto;
+    padding: 0;
+    border: 0;
+    border-radius: var(--stwid-radius-m);
+    background: transparent;
+    color: inherit;
+    font-size: inherit;
+    cursor: pointer;
+  }
+  body.stwid-- .stwid--drawer-close:focus-visible {
+    outline: var(--stwid-focus-ring);
+    outline-offset: -2px;
+  }
 }
 
 /* Hide the vanilla WI UI when drawer is active */
@@ -105,6 +133,7 @@ body.stwid-- #WorldInfo > .stwid--body.stwid--state-loading::after {
   body.stwid-- #WorldInfo {
     width: 100vw;
     height: 100dvh;
+    top: 0; /* full viewport height must not retain the host's top-bar offset */
   }
 
   body.stwid-- #WorldInfo > .stwid--body {
@@ -402,6 +431,19 @@ body.stwid-- #WorldInfo > .stwid--body.stwid--state-loading::after {
 
 .stwid--entry-manager .stwid--icon-tab {
   background-color: var(--SmartThemeBlurTintColor);
+  padding-top: 0;
+}
+
+/* A direct child of the manager scrollport can stay pinned for the whole table. */
+.stwid--entry-manager .stwid--icon-tab__dock {
+  flex: 0 0 auto;
+  padding-top: 0.6em;
+  padding-bottom: 1.3em;
+  background-color: var(--SmartThemeBlurTintColor);
+}
+
+.stwid--entry-manager .stwid--icon-tab__dock .stwid--icon-tab__bar {
+  margin-bottom: 0;
 }
 
 .stwid--icon-tab__bar {
@@ -441,6 +483,12 @@ body.stwid-- #WorldInfo > .stwid--body.stwid--state-loading::after {
 .stwid--icon-tab__button.active {
   opacity: 1;
   border-bottom-color: var(--SmartThemeBodyColor);
+}
+
+.stwid--icon-tab__button:focus-visible {
+  outline: var(--stwid-focus-ring);
+  outline-offset: calc(var(--stwid-focus-ring-offset) * -1);
+  border-radius: var(--stwid-radius-s);
 }
 
 .stwid--icon-tab__button[hidden],
@@ -534,8 +582,27 @@ body.stwid-- #WorldInfo > .stwid--body.stwid--state-loading::after {
   max-width: 9em;
 }
 
-.stwid--list-dropdown__trigger {
+button.stwid--list-dropdown__trigger,
+button.stwid--collapseToggle {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  padding: 0.35em;
+  margin: 0;
+  width: auto;
+  height: auto;
   border-radius: var(--stwid-radius-m);
+  cursor: pointer;
+}
+
+@media (max-width: 1000px) {
+  button.stwid--list-dropdown__trigger,
+  button.stwid--collapseToggle {
+    min-width: 44px;
+    min-height: 44px;
+    flex: 0 0 44px;
+  }
 }
 
 .stwid--menu {
@@ -697,6 +764,7 @@ body.stwid-- #WorldInfo > .stwid--body.stwid--state-loading::after {
   .stwid--multiselect-dropdown__menu--in-cell {
     max-height: 50vh;
     max-width: calc(100vw - 1rem);
+    overscroll-behavior: contain;
   }
 }
 
@@ -1066,10 +1134,20 @@ body.stwid-- #WorldInfo > .stwid--body.stwid--state-loading::after {
   .stwid--icon-tab__bar {
     display: flex;
     flex-wrap: nowrap;
+  }
+
+  .stwid--entry-manager .stwid--icon-tab__dock {
+    position: sticky;
+    top: 0;
+    z-index: 4; /* above sticky table headers, below popup overlays */
+    backdrop-filter: blur(var(--SmartThemeBlurStrength));
+  }
+
+  .stwid--list .stwid--icon-tab__bar {
     position: sticky;
     top: 0;
     z-index: 1;
-    background-color: var(--primaryBgCol, var(--SmartThemeBlurTintColor));
+    background-color: var(--SmartThemeBlurTintColor);
   }
 
   .stwid--icon-tab__button {
@@ -1159,7 +1237,6 @@ body.stwid-- #WorldInfo > .stwid--body.stwid--state-loading::after {
 }
 
 /* focus mode: hides all WI entry controls except the content field and stwim-- micromenu elements */
-.stwid--editor.stwid--focus #WIEntryHeaderTitlesPC,
 .stwid--editor.stwid--focus
   .world_entry
   *:not(:has([name='content']), [name='content'], :has([class*='stwim--']), [class*='stwim--']) {
@@ -1291,6 +1368,106 @@ body.stwid--ams-disabled .stwid--editor .inline-drawer:has(> .userSettingsInnerE
   display: none;
 }
 
+.stwid--editor .world_entry input.text_pole {
+  text-overflow: ellipsis;
+}
+
+/* Select2's default inline search margin clips the trigger-filter typing area. */
+.stwid--editor .select2-search--inline .select2-search__field {
+  margin-left: 0;
+}
+
+.stwid--editor .world_entry .killSwitch {
+  padding-block: calc((var(--stwid-control-height) - 1lh) / 2);
+  padding-inline: var(--stwid-hit-padding-x);
+  margin-block: calc((var(--stwid-control-height) - 1lh) / -2);
+  margin-inline: calc(var(--stwid-hit-padding-x) * -1);
+  border-radius: var(--stwid-radius-s);
+}
+
+.stwid--editor .world_entry .world_entry_form_control > small.textAlignCenter {
+  text-align: start;
+}
+
+/* Keep each label attached to its control at every panel width. */
+.stwid--editor #WIEntryHeaderTitlesPC {
+  display: none;
+}
+
+.stwid--editor .world_entry .WIEntryHeaderTitleMobile {
+  display: block;
+}
+
+.stwid--editor
+  .world_entry
+  .world_entry_form_control:has(> input[name='depth']:disabled)
+  > label[for='depth'] {
+  display: none;
+}
+
+.stwid--editor .world_entry .editor_maximize,
+.stwid--editor .world_entry .stwid--focus-toggle,
+.stwid--editor .world_entry .switch_input_type_icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--stwid-control-height);
+  min-width: var(--stwid-control-height);
+  height: var(--stwid-control-height);
+  padding: 0;
+  border: 0;
+  border-radius: var(--stwid-radius-s);
+  background-color: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: none;
+}
+
+/* Scope font sizing tightly enough to override host theme icon rules. */
+#WorldInfo .stwid--editor .world_entry .editor_maximize,
+#WorldInfo .stwid--editor .world_entry .stwid--focus-toggle,
+#WorldInfo .stwid--editor .world_entry .switch_input_type_icon {
+  font-size: var(--mainFontSize);
+}
+
+.stwid--editor .world_entry .editor_maximize,
+.stwid--editor .world_entry .stwid--focus-toggle {
+  margin-block: calc((var(--stwid-control-height) - 1lh) / -2);
+  margin-inline: calc((var(--stwid-control-height) - 1.25em) / -2);
+}
+
+.stwid--editor .world_entry .switch_input_type_icon {
+  margin-inline: 0;
+}
+
+.stwid--editor .world_entry .world_entry_form_control .keyprimarytextpole,
+.stwid--editor .world_entry .world_entry_form_control .keysecondarytextpole,
+.stwid--editor .world_entry .keyselect + .select2-container .select2-selection--multiple {
+  padding-right: calc(var(--stwid-control-height) + var(--stwid-gap-xs));
+}
+
+@media (hover: hover) {
+  .stwid--editor .world_entry .killSwitch:hover,
+  .stwid--editor .world_entry .editor_maximize:hover,
+  .stwid--editor .world_entry .stwid--focus-toggle:hover,
+  .stwid--editor .world_entry .switch_input_type_icon:hover {
+    background-color: var(--stwid-state-hover-bg);
+  }
+}
+
+.stwid--editor .world_entry .killSwitch:focus-visible,
+.stwid--editor .world_entry .editor_maximize:focus-visible,
+.stwid--editor .world_entry .stwid--focus-toggle:focus-visible,
+.stwid--editor .world_entry .switch_input_type_icon:focus-visible {
+  outline: var(--stwid-focus-ring);
+  outline-offset: var(--stwid-focus-ring-offset);
+}
+
+.stwid--editor .world_entry .stwid--focus-toggle[disabled],
+.stwid--editor .world_entry .switch_input_type_icon[disabled] {
+  opacity: var(--stwid-state-disabled-opacity);
+}
+
 @media screen and (width <= 1000px) {
   .stwid--editor {
     width: 100%;
@@ -1304,10 +1481,6 @@ body.stwid--ams-disabled .stwid--editor .inline-drawer:has(> .userSettingsInnerE
 
   .stwid--editor #wiActivationSettings {
     flex-flow: column wrap;
-  }
-
-  .stwid--editor #WIEntryHeaderTitlesPC {
-    display: none;
   }
 
   .stwid--editor .world_entry,
@@ -3102,6 +3275,7 @@ body.stwid--ams-disabled .stwid--editor .inline-drawer:has(> .userSettingsInnerE
     max-width: none;
     overflow: hidden auto; /* override: make the entry manager root the single touch-scroll container on mobile */
     touch-action: pan-y;
+    overscroll-behavior: contain;
   }
 
   .stwid--script-filter {
@@ -3121,6 +3295,7 @@ body.stwid--ams-disabled .stwid--editor .inline-drawer:has(> .userSettingsInnerE
     flex: 0 0 auto; /* override: no longer the flex-shrink target now the root scrolls; take natural content height instead of collapsing */
     overflow-x: auto;
     touch-action: pan-x pan-y;
+    overscroll-behavior-x: contain; /* leave vertical swipes to the manager root */
   }
 
   .stwid--bulk-edit-row {
@@ -3244,15 +3419,16 @@ body.stwid--ams-disabled .stwid--editor .inline-drawer:has(> .userSettingsInnerE
 
 /* Context menu container */
 .stwid--blocker .stwid--list-dropdown__menu {
-  /* --stwid-menu-item-height: 2.05em; */
+  --stwid-menu-item-height: 2.05em;
   position: fixed;
-  position-anchor: --stwid--ctx-anchor;
-  position-area: bottom right;
-  position-try-fallbacks: flip-block, flip-inline;
-  margin-top: -1lh;
+  margin: 0;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 0;
   filter: drop-shadow(1px 1px 2px var(--black50a));
   z-index: 30000;
-  overflow: hidden;
+  overflow: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--SmartThemeBorderColor);
   border-radius: 6px;
   display: flex;
@@ -3265,58 +3441,52 @@ body.stwid--ams-disabled .stwid--editor .inline-drawer:has(> .userSettingsInnerE
 
 .stwid--blocker .stwid--list-dropdown__menu .stwid--list-dropdown__item {
   min-height: var(--stwid-menu-item-height);
-  height: var(--stwid-menu-item-height);
-
-  /* opacity: 1; */
-  color: var(--SmartThemeBodyColor);
-
-  /* background-color: var(--SmartThemeBlurTintColor); */
-  cursor: pointer;
-  transition: color 150ms ease;
+  height: auto;
+  flex: 0 0 auto;
   flex-direction: row;
+  display: flex;
+  align-items: center;
   box-sizing: border-box;
+  gap: 0.4em;
   padding: 0.4em;
+  margin: 0;
+  border: 0;
+  border-radius: var(--stwid-radius-m);
+  background: transparent;
+  color: var(--SmartThemeBodyColor);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
 
-  /* border-radius: var(--stwid-radius-m); */
-  display: block;
-  overflow: hidden;
-
-  /* border: 1px solid var(--SmartThemeBorderColor); */
-
-  /* border-radius: 6px; */
-
-  /* background-color: var(--SmartThemeBlurTintColor); */
-
-  /* backdrop-filter: blur(var(--SmartThemeBlurStrength)); */
-
-  &:hover {
+  &:hover, &:focus-visible {
     color: var(--customThemeColor);
-  }
-
-  & #lorebook_ordering_button {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 0.35em;
+    background: var(--white10a);
   }
 
   &.stwid--book-sort {
-    /* opacity: 1; */
     cursor: default;
+    flex-wrap: wrap;
   }
 
   &.stwid--book-sort select {
     width: 9em;
+    min-width: 0;
+    max-width: 100%;
+    flex: 1 1 9em;
     color: var(--SmartThemeBodyColor);
     background-color: var(--white20a);
     min-height: var(--stwid-menu-item-height);
-    height: 100%;
-    margin-left: 1em;
+    margin: 0;
     font-size: 1em;
-
-    /* padding: 0em 0em 0em 0em; */
-    margin-block: 0;
   }
+}
+
+.stwid--context-blocker {
+  --stwid-radius-m: 6px;
+  --stwid-focus-ring: 2px solid var(--SmartThemeQuoteColor, currentColor);
+  --stwid-focus-ring-offset: -2px;
+  padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
+    max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
 }
 
 .stwid--list-dropdown__menu .stwid--list-dropdown__item .stwid--icon {
@@ -3325,14 +3495,15 @@ body.stwid--ams-disabled .stwid--editor .inline-drawer:has(> .userSettingsInnerE
   color: inherit;
   transition: color 150ms ease;
   text-align: center;
-  padding: 0 1.8em 0 0;
+  padding: 0;
 }
 
 .stwid--list-dropdown__menu .stwid--list-dropdown__item .stwid--label {
   flex: 1 1 auto;
   color: inherit;
   transition: color 150ms ease;
-  min-width: fit-content;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 @media screen and (width <= 1000px) {
@@ -3351,13 +3522,7 @@ body.stwid--ams-disabled .stwid--editor .inline-drawer:has(> .userSettingsInnerE
   }
 
   .stwid--blocker .stwid--list-dropdown__menu {
-    /* Guarantee a readable width: the menu opens beside its trigger, and when
-       the trigger sits at the right edge the anchor leaves almost no room,
-       collapsing the menu to a sliver that breaks every word. A min-width
-       forces it to keep a usable width (flipping to the opposite side when
-       needed) while min() keeps it inside the viewport on tiny screens. */
-    min-width: min(14em, calc(100vw - 2rem));
-    max-width: calc(100vw - 2rem);
+    --stwid-menu-item-height: 44px;
   }
 
   .stwid--list-dropdown__menu .stwid--list-dropdown__item .stwid--label {
@@ -3523,6 +3688,14 @@ body.stwid--ams-disabled .stwid--editor .inline-drawer:has(> .userSettingsInnerE
   .stwid--books .stwid--book .stwid--head,
   .stwid--folder .stwid--folder-header {
     transition: none;
+  }
+}
+
+/* Moonlit's 2px card margins overflow our full-width mobile editor card. The
+   class is present only while its actual theme stylesheet is mounted. */
+@media screen and (width <= 1000px) {
+  body.stwid--host-moonlit .stwid--editor .world_entry > .world_entry_form.wi-card-entry {
+    margin-inline: 0;
   }
 }
 

@@ -5,8 +5,10 @@ import vm from 'node:vm';
 
 const source = await readFile(new URL('../src/book-browser/book-list/book-list.world-entry.js', import.meta.url), 'utf8');
 const module = new vm.SourceTextModule(source);
-await module.link(() => new vm.SyntheticModule(['mirrorEntryFieldsToOriginalData', 'beginEntryNavigation'], function () {
+await module.link(() => new vm.SyntheticModule(['mirrorEntryFieldsToOriginalData', 'beginEntryNavigation', 'applyEntryToggleA11y', 'syncEntryToggleChecked'], function () {
   this.setExport('mirrorEntryFieldsToOriginalData', () => {});
+  this.setExport('applyEntryToggleA11y', () => {});
+  this.setExport('syncEntryToggleChecked', () => {});
   this.setExport('beginEntryNavigation', () => ({ isCurrent: () => true }));
 }));
 await module.evaluate();
@@ -56,8 +58,10 @@ test('rendered row selection and dragging follow a committed UID remap', async (
   }
   const realm = vm.createContext({ document: { createElement: () => new Element(), querySelector: () => null } });
   const rowsModule = new vm.SourceTextModule(source, { context: realm });
-  await rowsModule.link(() => new vm.SyntheticModule(['mirrorEntryFieldsToOriginalData', 'beginEntryNavigation'], function () {
+  await rowsModule.link(() => new vm.SyntheticModule(['mirrorEntryFieldsToOriginalData', 'beginEntryNavigation', 'applyEntryToggleA11y', 'syncEntryToggleChecked'], function () {
     this.setExport('mirrorEntryFieldsToOriginalData', () => {});
+    this.setExport('applyEntryToggleA11y', () => {});
+    this.setExport('syncEntryToggleChecked', () => {});
     this.setExport('beginEntryNavigation', () => ({ isCurrent: () => true }));
   }, { context: realm }));
   await rowsModule.evaluate();
@@ -99,8 +103,10 @@ test('mounted row actions resolve replacement data and a later remapped UID at e
   const realm = vm.createContext({ document: { createElement: () => new Element(), querySelector: () => new Element() } });
   const rowsModule = new vm.SourceTextModule(source, { context: realm });
   const mirrored = [];
-  await rowsModule.link(() => new vm.SyntheticModule(['mirrorEntryFieldsToOriginalData', 'beginEntryNavigation'], function () {
+  await rowsModule.link(() => new vm.SyntheticModule(['mirrorEntryFieldsToOriginalData', 'beginEntryNavigation', 'applyEntryToggleA11y', 'syncEntryToggleChecked'], function () {
     this.setExport('mirrorEntryFieldsToOriginalData', (_, entry) => mirrored.push(entry));
+    this.setExport('applyEntryToggleA11y', () => {});
+    this.setExport('syncEntryToggleChecked', () => {});
     this.setExport('beginEntryNavigation', () => ({ isCurrent: () => true, finish() {} }));
   }, { context: realm }));
   await rowsModule.evaluate();

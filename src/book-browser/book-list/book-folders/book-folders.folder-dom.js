@@ -1,3 +1,4 @@
+import { openContextMenu, closeContextMenu } from '../../../shared/context-menu.js';
 import {
   getVisibleFolderBookNames,
   getFolderActiveState,
@@ -10,8 +11,6 @@ import {
   deleteFolderAction,
 } from './book-folders.folder-actions.js';
 import { addLorebooksToFolderAction } from './book-folders.add-lorebooks.js';
-
-const FOLDER_MENU_ANCHOR_NAME = '--stwid--ctx-anchor';
 
 const updateFolderCount = (countElement, count) => {
   if (!countElement) return;
@@ -31,19 +30,14 @@ const setFolderCollapsed = (folderDom, isCollapsed) => {
 };
 
 const createFolderMenuItem = ({ itemClass, iconClass, label, onSelect }) => {
-  const item = document.createElement('div');
+  const item = document.createElement('button');
+  item.type = 'button';
   {
     item.classList.add('stwid--list-dropdown__item', 'stwid--menu-item');
     item.classList.add(itemClass);
-    item.setAttribute('role', 'button');
-    item.tabIndex = 0;
     item.addEventListener('click', onSelect);
-    item.addEventListener('keydown', (evt) => {
-      if (evt.key !== 'Enter' && evt.key !== ' ') return;
-      evt.preventDefault();
-      item.click();
-    });
     const menuIcon = document.createElement('i');
+    menuIcon.setAttribute('aria-hidden', 'true');
     {
       menuIcon.classList.add('stwid--icon');
       menuIcon.classList.add('fa-solid', 'fa-fw', iconClass);
@@ -88,108 +82,73 @@ const bindFolderHeaderDropHandlers = ({
   });
 };
 
-const buildFolderMenuOverlay = ({ folderName, menuActions, menuTrigger }) => {
-  const blocker = document.createElement('div');
-  {
-    const closeFolderMenu = () => {
-      blocker.remove();
-      menuTrigger.style.anchorName = '';
-      menuTrigger.setAttribute('aria-expanded', 'false');
-      menuTrigger.focus();
-    };
-    blocker.classList.add('stwid--blocker');
-    blocker.addEventListener('keydown', (evt) => {
-      if (evt.key !== 'Escape') return;
-      evt.preventDefault();
-      evt.stopPropagation();
-      closeFolderMenu();
-    });
-    blocker.addEventListener('mousedown', (evt) => {
-      evt.stopPropagation();
-    });
-    blocker.addEventListener('pointerdown', (evt) => {
-      evt.stopPropagation();
-    });
-    blocker.addEventListener('touchstart', (evt) => {
-      evt.stopPropagation();
-    });
-    blocker.addEventListener('click', (evt) => {
-      evt.stopPropagation();
-      closeFolderMenu();
-    });
-    const menu = document.createElement('div');
-    {
-      menu.classList.add('stwid--list-dropdown__menu', 'stwid--menu');
-      menu.append(
-        createFolderMenuItem({
-          itemClass: 'stwid--add-lorebooks',
-          iconClass: 'fa-list-check',
-          label: 'Add Lorebooks…',
-          onSelect: () => {
-            closeFolderMenu();
-            addLorebooksToFolderAction({ folderName, menuActions });
-          },
-        }),
-      );
-      menu.append(
-        createFolderMenuItem({
-          itemClass: 'stwid--rename',
-          iconClass: 'fa-pencil',
-          label: 'Rename Folder',
-          onSelect: async () => {
-            closeFolderMenu();
-            await renameFolderAction({ folderName, menuActions });
-          },
-        }),
-      );
-      menu.append(
-        createFolderMenuItem({
-          itemClass: 'stwid--import',
-          iconClass: 'fa-file-import',
-          label: 'Import Into Folder',
-          onSelect: async () => {
-            closeFolderMenu();
-            await importFolderAction({ folderName, menuActions });
-          },
-        }),
-      );
-      menu.append(
-        createFolderMenuItem({
-          itemClass: 'stwid--export',
-          iconClass: 'fa-file-export',
-          label: 'Export Folder',
-          onSelect: () => {
-            closeFolderMenu();
-            exportFolderAction({ folderName, menuActions });
-          },
-        }),
-      );
-      menu.append(
-        createFolderMenuItem({
-          itemClass: 'stwid--entry-manager',
-          iconClass: 'fa-arrow-down-wide-short',
-          label: 'Entry Manager (Folder)',
-          onSelect: () => {
-            closeFolderMenu();
-            entryManagerFolderAction({ folderName, menuActions });
-          },
-        }),
-      );
-      menu.append(
-        createFolderMenuItem({
-          itemClass: 'stwid--delete',
-          iconClass: 'fa-trash-can',
-          label: 'Delete Folder',
-          onSelect: async () => {
-            closeFolderMenu();
-            await deleteFolderAction({ folderName, menuActions });
-          },
-        }),
-      );
-    }
-    blocker.append(menu);
-  }
-  return blocker;
+const appendFolderMenuItems = ({ folderName, menuActions, menu, closeFolderMenu }) => {
+  menu.append(
+    createFolderMenuItem({
+      itemClass: 'stwid--add-lorebooks',
+      iconClass: 'fa-list-check',
+      label: 'Add Lorebooks…',
+      onSelect: () => {
+        closeFolderMenu();
+        addLorebooksToFolderAction({ folderName, menuActions });
+      },
+    }),
+  );
+  menu.append(
+    createFolderMenuItem({
+      itemClass: 'stwid--rename',
+      iconClass: 'fa-pencil',
+      label: 'Rename Folder',
+      onSelect: async () => {
+        closeFolderMenu();
+        await renameFolderAction({ folderName, menuActions });
+      },
+    }),
+  );
+  menu.append(
+    createFolderMenuItem({
+      itemClass: 'stwid--import',
+      iconClass: 'fa-file-import',
+      label: 'Import Into Folder',
+      onSelect: async () => {
+        closeFolderMenu();
+        await importFolderAction({ folderName, menuActions });
+      },
+    }),
+  );
+  menu.append(
+    createFolderMenuItem({
+      itemClass: 'stwid--export',
+      iconClass: 'fa-file-export',
+      label: 'Export Folder',
+      onSelect: () => {
+        closeFolderMenu();
+        exportFolderAction({ folderName, menuActions });
+      },
+    }),
+  );
+  menu.append(
+    createFolderMenuItem({
+      itemClass: 'stwid--entry-manager',
+      iconClass: 'fa-arrow-down-wide-short',
+      label: 'Entry Manager (Folder)',
+      onSelect: () => {
+        closeFolderMenu();
+        entryManagerFolderAction({ folderName, menuActions });
+      },
+    }),
+  );
+  menu.append(
+    createFolderMenuItem({
+      itemClass: 'stwid--delete',
+      iconClass: 'fa-trash-can',
+      label: 'Delete Folder',
+      onSelect: async () => {
+        closeFolderMenu();
+        await deleteFolderAction({ folderName, menuActions });
+      },
+    }),
+  );
 };
 
 const createFolderActionsDom = ({ folderName, header, menuActions }) => {
@@ -248,7 +207,8 @@ const createFolderActionsDom = ({ folderName, header, menuActions }) => {
       actions.append(addButton);
     }
     if (menuActions) {
-      const menuTrigger = document.createElement('div');
+      const menuTrigger = document.createElement('button');
+      menuTrigger.type = 'button';
       {
         menuTrigger.classList.add('stwid--action');
         menuTrigger.classList.add('stwid--folder-menu');
@@ -256,29 +216,23 @@ const createFolderActionsDom = ({ folderName, header, menuActions }) => {
         menuTrigger.classList.add('fa-solid', 'fa-fw', 'fa-ellipsis-vertical');
         menuTrigger.title = 'Folder menu';
         menuTrigger.setAttribute('aria-label', 'Folder menu');
-        menuTrigger.setAttribute('role', 'button');
+        menuTrigger.setAttribute('aria-haspopup', 'dialog');
         menuTrigger.setAttribute('aria-expanded', 'false');
-        menuTrigger.tabIndex = 0;
-        menuTrigger.addEventListener('keydown', (evt) => {
-          if (evt.key !== 'Enter' && evt.key !== ' ') return;
-          evt.preventDefault();
-          evt.stopPropagation();
-          menuTrigger.click();
-        });
-        menuTrigger.addEventListener('click', (evt) => {
-          evt.preventDefault();
-          evt.stopPropagation();
-          if (menuTrigger.getAttribute('aria-expanded') === 'true') return;
-          menuTrigger.style.anchorName = FOLDER_MENU_ANCHOR_NAME;
-          menuTrigger.setAttribute('aria-expanded', 'true');
-          const overlay = buildFolderMenuOverlay({ folderName, menuActions, menuTrigger });
-          document.body.append(overlay);
-          overlay.querySelector('.stwid--menu-item')?.focus();
+        menuTrigger.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openContextMenu({
+            trigger: menuTrigger,
+            label: `Folder menu: ${folderName}`,
+            event,
+            build: (menu, closeFolderMenu) => appendFolderMenuItems({ folderName, menuActions, menu, closeFolderMenu }),
+          });
         });
         actions.append(menuTrigger);
       }
     }
-    const toggle = document.createElement('i');
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
     {
       toggle.classList.add('stwid--action');
       toggle.classList.add('stwid--folder-toggle');
@@ -411,7 +365,10 @@ const createFolderDom = ({ folderName, onToggle, onDrop, onDragStateChange, menu
     toggle,
     activeToggle,
     observer,
-    cleanup: () => observer.disconnect(),
+    cleanup: () => {
+      observer.disconnect();
+      closeContextMenu(root);
+    },
     updateActiveToggle,
   };
 };

@@ -112,6 +112,8 @@ export async function buildTableBody({
     tbody,
     dom,
     cache,
+    entryManagerState,
+    isRenderCurrent,
     enqueueSave,
     setEntryManagerSort,
     SORT,

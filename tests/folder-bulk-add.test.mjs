@@ -316,7 +316,7 @@ test('dialog disables controls during submission and keeps failures selected for
   closeAddLorebooksDialog(ui.options);
 });
 
-test('folder menu keyboard activation reaches Add Lorebooks and Escape restores focus', async () => {
+test('native folder buttons delegate popup ownership and Add Lorebooks action', async () => {
   const body = new Element('body');
   const context = vm.createContext({ document: { body, createElement: (tag) => new Element(tag) } });
   const source = await readFile(new URL('../src/book-browser/book-list/book-folders/book-folders.folder-dom.js', import.meta.url), 'utf8');
@@ -325,6 +325,13 @@ test('folder menu keyboard activation reaches Add Lorebooks and Escape restores 
   let opened = 0;
   await module.link((specifier) => {
     const exports = Object.fromEntries(imports.get(specifier).split(',').map((item) => item.trim()).filter(Boolean).map((name) => [name, () => {}]));
+    if (Object.hasOwn(exports, 'openContextMenu')) exports.openContextMenu = ({ trigger, label, build }) => {
+      assert.equal(label, 'Folder menu: Target');
+      const menu = new Element('div');
+      trigger.setAttribute('aria-expanded', 'true');
+      build(menu, () => { menu.remove(); trigger.setAttribute('aria-expanded', 'false'); });
+      body.append(menu);
+    };
     if (Object.hasOwn(exports, 'addLorebooksToFolderAction')) exports.addLorebooksToFolderAction = () => { opened += 1; };
     return new vm.SyntheticModule(Object.keys(exports), function () {
       for (const [name, value] of Object.entries(exports)) this.setExport(name, value);
@@ -333,17 +340,15 @@ test('folder menu keyboard activation reaches Add Lorebooks and Escape restores 
   await module.evaluate();
   const actions = module.namespace.createFolderActionsDom({ folderName: 'Target', header: new Element('header'), menuActions: {} });
   const trigger = actions.querySelector('.stwid--folder-menu');
-  assert.equal(trigger.tabIndex, 0);
-  await trigger.emit('keydown', { key: 'Enter', preventDefault() {}, stopPropagation() {} });
+  assert.equal(trigger.tagName, 'button');
+  assert.equal(trigger.type, 'button');
+  assert.equal(trigger.getAttribute('aria-haspopup'), 'dialog');
+  await trigger.emit('click', { preventDefault() {}, stopPropagation() {} });
   assert.equal(trigger.getAttribute('aria-expanded'), 'true');
   const add = body.querySelector('.stwid--add-lorebooks');
-  assert.equal(add.focused, true);
-  await add.emit('keydown', { key: ' ', preventDefault() {} });
-  await turn();
+  assert.equal(add.tagName, 'button');
+  await add.emit('click');
   assert.equal(opened, 1);
   assert.equal(trigger.getAttribute('aria-expanded'), 'false');
-  await trigger.emit('keydown', { key: ' ', preventDefault() {}, stopPropagation() {} });
-  await body.children[0].emit('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} });
   assert.equal(body.children.length, 0);
-  assert.equal(trigger.focused, true);
 });

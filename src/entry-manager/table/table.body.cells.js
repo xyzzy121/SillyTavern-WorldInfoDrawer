@@ -3,6 +3,7 @@ import { ENTRY_MANAGER_RECURSION_OPTIONS } from '../../shared/constants.js';
 import { createMoveButton } from './table.body.row-sorting.js';
 import { mirrorEntryFieldsToOriginalData } from '../../shared/original-data.js';
 import { buildCharacterFilterCell } from './table.body.character-filter.js';
+import { syncEntryToggleChecked } from '../../shared/entry-toggle-a11y.js';
 
 const TEXT_POLE_CLASS = 'text_pole';
 const ORDER_INPUT_TIGHT_CLASS = 'stwid--order-input';
@@ -309,6 +310,7 @@ export function buildEntryManagerCell(col, {
         const listToggle = cache[entryRow.book].dom.entry?.[entryRow.data.uid]?.isEnabled;
         if (listToggle) {
           applyEnabledIcon(listToggle, nextDisabled);
+          syncEntryToggleChecked(listToggle);
     }
     await enqueueSave(entryRow.book);
   });

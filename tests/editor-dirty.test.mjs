@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
+import { applyEntryToggleA11y } from '../src/shared/entry-toggle-a11y.js';
 
 class Element {
   constructor(name = '', tagName = 'INPUT', type = 'text', value = '') {
@@ -56,6 +57,11 @@ const createEditor = async ({ fields = {}, controls = [], onCloseMenus = () => {
     { context },
   );
   await module.link((specifier) => {
+    if (specifier.endsWith('entry-toggle-a11y.js')) {
+      return new SyntheticModule(['applyEntryToggleA11y'], function () {
+        this.setExport('applyEntryToggleA11y', applyEntryToggleA11y);
+      }, { context });
+    }
     if (specifier.endsWith('entry-navigation.js')) return new SourceTextModule(navigationSource, { context });
     if (specifier.endsWith('multiselect-dropdown.js')) {
       return new SyntheticModule(['closeOpenMultiselectDropdownMenus'], function () {

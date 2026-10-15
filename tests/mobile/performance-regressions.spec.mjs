@@ -216,6 +216,9 @@ test('manager first interaction hydrates controls without losing a click or keyb
   await page.waitForTimeout(800);
   await page.mouse.move(gripBox.x + gripBox.width / 2, neighborBox.y + neighborBox.height / 4, { steps: 10 });
   await page.mouse.up();
+  const reorderConfirmation = page.locator('dialog[open]').filter({ hasText: 'Save this row order?' });
+  await expect(reorderConfirmation).toContainText('not in ascending Custom order');
+  await reorderConfirmation.locator('.popup-button-ok').click();
   const afterDrag = beforeDrag.filter(uid => uid !== '996');
   afterDrag.splice(afterDrag.indexOf('995'), 0, '996');
   await expect.poll(async () => rows(page).evaluateAll(nodes => nodes.map(node => node.dataset.uid))).toEqual(afterDrag);

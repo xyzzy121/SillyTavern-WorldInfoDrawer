@@ -262,7 +262,8 @@ const renderEntryManager = async ({
     debounce,
   });
 
-  const entryManagerTabs = buildEntryManagerTabs({ displayToolbarEl, bulkEditRowEl });
+  const { iconTabDock: entryManagerTabDockEl, iconTab: entryManagerTabsEl } =
+    buildEntryManagerTabs({ displayToolbarEl, bulkEditRowEl });
   const filterEl = buildEntryManagerFilterPanel({
     dom,
     entryManagerState,
@@ -355,7 +356,7 @@ const renderEntryManager = async ({
   }
   refreshSelectionCount();
 
-  entryManagerRootEl.append(entryManagerTabs, filterEl, orderTableWrapEl);
+  entryManagerRootEl.append(entryManagerTabDockEl, entryManagerTabsEl, filterEl, orderTableWrapEl);
   dom.editor.append(entryManagerRootEl);
   dom.order.hydration?.start(orderTableWrapEl);
 };

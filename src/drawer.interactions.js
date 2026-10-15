@@ -1,3 +1,4 @@
+import { closeContextMenu } from './shared/context-menu.js';
 // Global drawer interaction wiring: keyboard shortcuts (bulk delete) and the
 // MutationObservers that keep the drawer/select DOM in sync with WI changes.
 // Extracted from drawer.js, which now stays focused on bootstrap + DOM map.
@@ -186,6 +187,7 @@ export const installDrawerObservers = ({
   moDrawer = new MutationObserver(() => {
     const drawerIsOpen = isDrawerOpen(drawerContent);
     const justOpened = drawerIsOpen && !drawerWasOpen;
+    if (!drawerIsOpen && drawerWasOpen) closeContextMenu();
     drawerWasOpen = drawerIsOpen;
     if (!justOpened) return;
 
@@ -209,6 +211,7 @@ export const installDrawerObservers = ({
     moSel,
     moDrawer,
     cleanup: () => {
+      closeContextMenu();
       moSel?.disconnect();
       moDrawer?.disconnect();
     },

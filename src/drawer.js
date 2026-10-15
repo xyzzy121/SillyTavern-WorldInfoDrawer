@@ -400,6 +400,23 @@ const buildAndAttachDrawerDom = ({
 };
 
 const wireCloseButton = ({ dom, drawerContent }) => {
+  // The full-height mobile drawer covers the host's top-bar toggle. Keep a
+  // native close control in its visible header, using the host close path so
+  // drafts and reopen state retain their normal ownership.
+  const heading = drawerContent?.querySelector('h3');
+  if (heading && !drawerContent.querySelector('.stwid--drawer-close')) {
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'stwid--drawer-close fa-solid fa-xmark';
+    close.setAttribute('aria-label', 'Close World Info');
+    close.title = 'Close World Info';
+    close.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      drawerContent.parentElement?.querySelector(':scope > .drawer-toggle')?.click();
+    });
+    heading.parentElement.append(close);
+  }
   // The host's own drawer-close control: the first h3 inside #WorldInfo and its
   // sole direct-child span (the "Worlds/Lorebooks" title). The selector is
   // positional by host design — see SILLYTAVERN_OWNERSHIP_BOUNDARY.md and the

@@ -37,6 +37,23 @@ and keyboard interaction:
 npm test -- performance-regressions.spec.mjs --project=chromium-390x844 --project=webkit-390x844 --grep 'manager first interaction'
 ```
 
+The context-menu and upstream compatibility cases cover native three-dot and
+collapse buttons, scrollable popup placement, enlarged text and rotation,
+keyboard focus, backdrop/refresh/close cleanup, optional integration contracts,
+enabled switches, Moonlit styling, attached editor labels, and sticky manager
+tabs. Optional plugins are replaced by local test callbacks; the External Editor
+request is fulfilled locally. Chromium also exercises an emulated touch swipe
+inside a tall menu. WebKit checks the same scrollable geometry and reachability.
+
+```powershell
+npm test -- context-menu.spec.mjs context-menu-integrations.spec.mjs upstream-layout.spec.mjs --project=chromium-320x568 --project=chromium-390x844 --project=chromium-844x390 --project=webkit-320x568 --project=webkit-390x844 --project=webkit-844x390
+```
+
+This focused addition runs 78 cases. The mobile drawer's visible **Close World
+Info** button uses the host close path; the top-bar toggle is covered while the
+full-height drawer is open. Reorder cases explicitly accept the new confirmation
+when replacing an order displayed with a different sort.
+
 Results, screenshots, traces, and the HTML report default to the ignored
 `test-results/` directory here. Set `ST_MOBILE_OUTPUT` to an absolute path for a
 separate results directory. Do not run multiple suites against the same data

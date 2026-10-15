@@ -1,5 +1,61 @@
 # WorldInfoDrawer validation
 
+## October 15, 2026 — upstream adoption and mobile context menus
+
+Reviewed upstream `328f26d`, `176ca1c`, and `0db1a3c` against fork `60f62f5`.
+The accepted changes were adapted to the fork's deferred rendering and save
+ownership rather than replacing its renderer. They include entry-toggle
+accessibility, structural Collapse All reconciliation, guarded reordering,
+attached editor labels, the sticky manager tab dock, and gated Moonlit margins.
+The six Browser tabs and saved preferences remain intact. The upstream toolbar
+redesign, hardcoded sticky Entry column, fixed Select2 heights, mobile wrapping
+relaxations, and manifest downgrade were omitted.
+
+Lorebook and folder context menus now use native buttons and measured viewport
+placement. The popup scrolls within the visual viewport, consumes only backdrop
+clicks, keeps native Book Sort interaction open, contains keyboard focus, and
+releases listeners and its observer on close. Actions close before invoking the
+existing handlers; later callbacks cannot override destination focus. Menu and
+adjacent collapse controls have distinct 44-pixel mobile targets. A visible
+mobile Close World Info button uses the host's close path because the corrected
+full-height drawer covers the top-bar toggle.
+
+The Node suite passes **175/175 tests**. Reorder tests cover drag, arrow, and
+jump confirmation; cancellation; stale render, row, filter, sort, UID, and cache
+ownership; overlap prevention; disposal; and originalData preservation. Other
+new tests cover switch state/rollback and Moonlit observer lifetime.
+
+The selected Playwright checks cover **129 distinct scenarios** on the final
+production source: 60 mobile cases per engine at 320 × 568, 390 × 844, and
+844 × 390, four deferred-rendering cases per engine at 390 × 844, and one
+desktop keyboard-navigation case at 1440 × 1000. All have passing results.
+Chromium's mobile matrix passed 60/60 on its first run. WebKit initially passed
+58/60; the other two completed their extension assertions but failed the error
+check because a fixture reload raced the host welcome screen's recent-chats
+request. Both passed unchanged on an explicit rerun. The retained reports
+therefore contain 131 attempts: 129 passed and two failed. No retry policy or
+error whitelist was added to conceal the original failures.
+
+Trace inspection places both recent-chats errors on the outgoing document,
+41–52 ms after reload began and before the new navigation committed. The new
+document's requests returned HTTP 200. The strict console audit retains these
+two startup errors and six existing deferred-DOM sort warnings. Each warning
+occurs when Book Sort is saved on a collapsed book: metadata and cached sort
+are updated before the missing-row guard, and later expansion reads that sort
+before constructing rows. This path is unchanged from the baseline. There
+were no HTTP 503 responses, missing diagnostic attachments, or other unexpected
+events in the selected runs.
+
+Narrow portrait, landscape with enlarged text, editor labels, and sticky manager
+tab screenshots were inspected. Optional Bulk Edit, External Editor, and STLO
+integration callbacks were exercised with local substitutes. These checks use
+browser emulation, not physical mobile devices or installed external plugins.
+
+All 75 production files match the saved final source hashes and both isolated
+runtime copies. The source, original failures, reruns, console audit, runtime
+hash verification, and performance comparison are retained in the workspace's
+`upstream-validation` directory. The live installation was not modified.
+
 ## October 15, 2026 — demand rendering and mobile interaction
 
 Validation uses a separate SillyTavern 1.19.0 staging checkout and disposable

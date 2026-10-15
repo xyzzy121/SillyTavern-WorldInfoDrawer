@@ -6,6 +6,7 @@ import { createWorkBudget } from '../src/shared/utils.js';
 import * as utils from '../src/entry-manager/entry-manager.utils.js';
 import { ENTRY_MANAGER_RECURSION_OPTIONS } from '../src/shared/constants.js';
 import { createSelectionCounter } from '../src/entry-manager/table/table.selection.js';
+import { syncEntryToggleChecked } from '../src/shared/entry-toggle-a11y.js';
 
 const turn = () => new Promise((resolve) => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
@@ -364,6 +365,7 @@ async function rowHarness({ visibleColumns = {} } = {}) {
     '../../shared/constants.js': { ENTRY_MANAGER_RECURSION_OPTIONS },
     './table.body.row-sorting.js': { createMoveButton: () => new Element('button') },
     '../../shared/original-data.js': { mirrorEntryFieldsToOriginalData() {} },
+    '../../shared/entry-toggle-a11y.js': { syncEntryToggleChecked },
     './table.body.character-filter.js': { buildCharacterFilterCell() { assert.fail('Hidden character controls must not be built'); } },
   }, { document });
   const entry = { uid: 0, key: ['key'], comment: 'Entry zero', depth: 4, order: 100, position: 0 };
@@ -434,6 +436,8 @@ test('strategy and position edits succeed without a mounted Book Browser row or 
 
 test('the hydrated enabled control remains keyboard reachable and toggles once for Enter and Space', async () => {
   const h = await rowHarness();
+  const browserToggle = new Element();
+  h.cache.A.dom.entry[0] = { isEnabled: browserToggle };
   const control = h.row.stwidHydrateCell('enabled').children[0];
   assert.equal(control.tabIndex, 0, 'Focus must transfer from the deferred cell to a keyboard reachable control');
   assert.equal(control.getAttribute('role'), 'button');
@@ -451,10 +455,14 @@ test('the hydrated enabled control remains keyboard reachable and toggles once f
     assert.equal(h.saves(), index + 1);
     assert.equal(h.entry.disable, index === 0);
     assert.equal(control.getAttribute('aria-pressed'), String(index !== 0));
+    assert.equal(browserToggle.getAttribute('aria-checked'), String(index !== 0));
   }
   control.listeners.get('keydown')({ key: 'Enter', ctrlKey: true });
   control.listeners.get('keydown')({ key: 'ArrowDown' });
   assert.equal(clicks, 2, 'Navigation and modified shortcuts must keep their usual behavior');
+  delete h.cache.A.dom.entry[0];
+  await control.click();
+  assert.equal(h.saves(), 3, 'The same control must still work after the Browser row is unmounted');
 });
 
 test('refreshing pending values preserves unchanged text nodes and accessibility attributes', async () => {

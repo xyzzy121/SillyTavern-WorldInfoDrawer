@@ -2,6 +2,7 @@ import { applyMobileHeaderLayout, MOBILE_EDITOR_MEDIA_QUERY } from './editor-pan
 import { splitKeywordsAndRegexes } from '../shared/st-host.js';
 import { closeOpenMultiselectDropdownMenus } from '../shared/multiselect-dropdown.js';
 import { beginEntryNavigation, cancelEntryNavigation, hasPendingEntryNavigation, preserveEntryNavigation } from '../shared/entry-navigation.js';
+import { applyEntryToggleA11y } from '../shared/entry-toggle-a11y.js';
 
 const ACTIVE_STATE_CLASS = 'stwid--state-active';
 const FOCUS_CLASS = 'stwid--focus';
@@ -197,6 +198,7 @@ const createActivationSettingsController = ({
 const createFocusControls = ({ createFocusToggleButton, dom }) => {
   const appendUnfocusButton = () => {
     const unfocus = createFocusToggleButton('stwid--unfocus-toggle', 'fa-compress', 'Unfocus');
+    unfocus.classList.add('menu_button');
     dom.editor.append(unfocus);
   };
 
@@ -275,6 +277,7 @@ const buildEntryEditDom = async ({
     $(drawerToggle).trigger('inline-drawer-toggle');
   }
   if (!isTokenCurrent()) return null;
+  applyEntryToggleA11y(entryEditorDom?.querySelector?.('[name="entryKillSwitch"]'));
   return { entryEditorDom, payloadEntry };
 };
 
@@ -581,7 +584,6 @@ export const initEditorPanel = ({
     button.type = 'button';
     button.setAttribute('aria-label', title);
     button.classList.add(toggleClass);
-    button.classList.add('menu_button');
     button.classList.add('fa-solid', 'fa-fw', iconClass);
     button.title = title;
     button.addEventListener('click', () => {

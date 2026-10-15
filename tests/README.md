@@ -28,6 +28,9 @@ suite covers:
 | `entry-navigation.test.mjs` | Cross-book request ordering, direct-click supersession, Back/clear cancellation, and same-book navigation-pin ownership. |
 | `manager-hydration.test.mjs` | Deferred cell values and controls, immediate pointer/keyboard activation, scrolling debounce, observer replacement/cleanup, bulk targets, UID remapping, selection counters, unchanged preview nodes, and real batch yields. |
 | `multiselect-escape.test.mjs` | Capture-phase Escape handling, focus restoration, and releasing dropdown listeners when the owning editor closes. |
+| `entry-toggle-a11y.test.mjs` | Browser and host-editor switch semantics, single keyboard activation, optimistic state, save rollback, and direct/bulk enabled-state synchronization. |
+| `host-compat.test.mjs` | Moonlit stylesheet detection, live enable/disable, one head observer per document, and cleanup. |
+| `row-sorting.test.mjs` | Drag/arrow/jump confirmation, cancellation rollback, filtered/descending views, concurrent actions, stale render/row/filter/sort/UID/cache ownership, disposal, and originalData mirroring. |
 
 These tests use synthetic data and host adapters; they do not require a running
 SillyTavern server. Browser validation and measurements are documented in

@@ -2,6 +2,7 @@ import { setTooltip } from '../entry-manager.utils.js';
 import { ENTRY_MANAGER_RECURSION_OPTIONS } from '../../shared/constants.js';
 import { maybeYieldToEventLoop } from '../../shared/utils.js';
 import { mirrorEntryFieldsToOriginalData } from '../../shared/original-data.js';
+import { syncEntryToggleChecked } from '../../shared/entry-toggle-a11y.js';
 import {
   BULK_APPLY_BATCH_SIZE,
   APPLY_DIRTY_CLASS,
@@ -120,6 +121,7 @@ function syncActiveStateToggles({ tr, cache, bookName, uid, willDisable }) {
   if (listToggle) {
     listToggle.classList.toggle(TOGGLE_OFF_CLASS, willDisable);
     listToggle.classList.toggle(TOGGLE_ON_CLASS, !willDisable);
+    syncEntryToggleChecked(listToggle);
   }
 }
 

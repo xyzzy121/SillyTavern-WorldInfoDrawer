@@ -147,6 +147,9 @@ test('Entry Manager bulk changes target selected rows and reorder buttons persis
   const before = await rows(page).evaluateAll(nodes => nodes.map(node => node.dataset.uid));
   const down = rows(page).first().getByRole('button', { name: /^Move down\./ });
   await down.tap();
+  const reorderConfirmation = page.locator('dialog[open]').filter({ hasText: 'Save this row order?' });
+  await expect(reorderConfirmation).toContainText('not in ascending Custom order');
+  await reorderConfirmation.locator('.popup-button-ok').tap();
   await expect.poll(async () => rows(page).first().getAttribute('data-uid')).toBe(before[1]);
   await expect.poll(async () => (await readBook(page)).entries[before[0]].extensions.display_index).toBe(1);
   const moved = rows(page).filter({ has: page.locator('[data-col="entry"] .stwid--comment', { hasText: `Entry ${before[0].padStart(2, '0')} — Main` }) });

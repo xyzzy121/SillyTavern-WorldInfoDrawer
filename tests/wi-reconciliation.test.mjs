@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { createDeferred, createWorkBudget } from '../src/shared/utils.js';
 import { createUpdateQueue } from '../src/shared/update-queue.js';
+import { syncEntryToggleChecked } from '../src/shared/entry-toggle-a11y.js';
 
 const source = await readFile(new URL('../src/shared/wi-update-handler.js', import.meta.url), 'utf8');
 const turn = () => new Promise((resolve) => setImmediate(resolve));
@@ -25,6 +26,7 @@ const makeHandler = async ({ load = async () => ({}), names = [], budget = creat
     },
     './utils.js': { createDeferred, createWorkBudget: budget },
     './update-queue.js': { createUpdateQueue },
+    './entry-toggle-a11y.js': { syncEntryToggleChecked },
   };
   await module.link((specifier) => {
     const values = stubs[specifier];
@@ -185,6 +187,48 @@ test('updates to unmounted books reconcile all data without creating rows', asyn
   assert.equal(changes[0][2], cache.A.entries[changes[0][1]], 'view hooks receive committed data');
 });
 
+test('external enabled updates and save recovery synchronize the mounted switch state', async () => {
+  const handler = await makeHandler();
+  const cache = { A: makeBook({ 0: { uid: 0, disable: false, key: [] } }) };
+  const classes = new Set(['fa-toggle-on']);
+  const attributes = new Map([['aria-checked', 'true']]);
+  cache.A.dom.entry[0].isEnabled = {
+    classList: {
+      contains: (name) => classes.has(name),
+      toggle: (name, force) => force ? classes.add(name) : classes.delete(name),
+    },
+    getAttribute: (name) => attributes.get(name) ?? null,
+    setAttribute: (name, value) => attributes.set(name, value),
+  };
+  for (const disable of [true, false]) {
+    const options = syncOptions(cache, { entries: { 0: { uid: 0, disable, key: [] } } });
+    assert.equal(await handler.syncBookEntriesAndDom(options), true);
+    assert.equal(classes.has('fa-toggle-on'), !disable);
+    assert.equal(attributes.get('aria-checked'), String(!disable));
+  }
+});
+
+test('deleting the final expanded book updates collapse-all once after structural reconciliation', async () => {
+  const handler = await makeHandler({ names: ['A'] });
+  const cache = { A: makeBook(), deleted: makeBook() };
+  let updates = 0;
+  const api = handler.initWIUpdateHandler({
+    cache, getCurrentEditor: () => null, setCurrentEditor() {},
+    getEditorPanelApi: () => null, getRefreshBookSourceLinks: () => null,
+    getListPanelApi: () => ({
+      updateCollapseAllToggle() {
+        updates++;
+        assert.deepEqual(Object.keys(cache), ['A']);
+      },
+    }),
+  });
+  await api.updateWIChange();
+  assert.equal(updates, 1);
+  await api.updateWIChange();
+  assert.equal(updates, 1, 'Data-only reconciliation does not redo the structural control update');
+  api.cleanup();
+});
+
 test('content-only updates skip title sorting and search but still affect length sort', async () => {
   const { syncBookEntriesAndDom, affectsEntrySort } = await makeHandler();
   const cache = { A: makeBook() };
@@ -231,7 +275,11 @@ test('a superseded batch waits for the authoritative list rebuild without render
   const api = handler.initWIUpdateHandler({
     cache: {}, getCurrentEditor: () => null, setCurrentEditor() {},
     getEditorPanelApi: () => null, getRefreshBookSourceLinks: () => null,
-    getListPanelApi: () => ({ captureRefreshGuard: () => () => current, renderBook: () => assert.fail('stale render') }),
+    getListPanelApi: () => ({
+      captureRefreshGuard: () => () => current,
+      renderBook: () => assert.fail('stale render'),
+      updateCollapseAllToggle: () => assert.fail('stale batch must not update collapse-all'),
+    }),
   });
   let finished = false;
   const result = api.updateWIChange().then(() => { finished = true; });
